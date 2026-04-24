@@ -28,10 +28,10 @@ function requireEnv(k: string): string {
 }
 
 async function main() {
-  // SDK reads CDP_API_KEY_ID / CDP_API_KEY_SECRET / CDP_WALLET_SECRET from env
+  // SDK reads CDP_API_KEY_ID / CDP_API_KEY_SECRET from env. CDP_WALLET_SECRET
+  // is only needed for Server Wallet ops (which we don't use).
   requireEnv("CDP_API_KEY_ID");
   requireEnv("CDP_API_KEY_SECRET");
-  requireEnv("CDP_WALLET_SECRET");
 
   const cdp = new CdpClient();
 
