@@ -1,0 +1,487 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.27;
+
+import {Test, console2} from "forge-std/Test.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {CozyBetEscrow} from "../src/CozyBetEscrow.sol";
+import {MockUSDC} from "./MockUSDC.sol";
+
+contract CozyBetEscrowTest is Test {
+    CozyBetEscrow internal escrow;
+    MockUSDC internal usdc;
+
+    address internal admin = makeAddr("admin");
+    address internal resolver = makeAddr("resolver");
+    address internal arbiter = makeAddr("arbiter");
+    address internal alice = makeAddr("alice");
+    address internal bob = makeAddr("bob");
+    address internal carol = makeAddr("carol"); // non-participant
+
+    address internal owner1 = makeAddr("owner1");
+    address internal owner2 = makeAddr("owner2");
+    address internal owner3 = makeAddr("owner3");
+    address internal owner4 = makeAddr("owner4");
+
+    uint256 internal constant STAKE = 100e6; // 100 mUSDC
+    uint256 internal constant BET_ID = 42;
+
+    bytes32 internal constant RESOLVER_ROLE = keccak256("RESOLVER_ROLE");
+    bytes32 internal constant ARBITER_ROLE = keccak256("ARBITER_ROLE");
+
+    function setUp() public {
+        usdc = new MockUSDC();
+
+        address[4] memory owners = [owner1, owner2, owner3, owner4];
+        escrow = new CozyBetEscrow(IERC20(address(usdc)), owners, admin);
+
+        vm.startPrank(admin);
+        escrow.grantRole(RESOLVER_ROLE, resolver);
+        escrow.grantRole(ARBITER_ROLE, arbiter);
+        vm.stopPrank();
+
+        usdc.mint(alice, 10_000e6);
+        usdc.mint(bob, 10_000e6);
+        usdc.mint(carol, 10_000e6);
+
+        vm.prank(alice);
+        usdc.approve(address(escrow), type(uint256).max);
+        vm.prank(bob);
+        usdc.approve(address(escrow), type(uint256).max);
+        vm.prank(carol);
+        usdc.approve(address(escrow), type(uint256).max);
+    }
+
+    // -----------------------------------------------------------------
+    // Constructor
+    // -----------------------------------------------------------------
+
+    function test_Constructor_RevertsOnZeroToken() public {
+        address[4] memory owners = [owner1, owner2, owner3, owner4];
+        vm.expectRevert(CozyBetEscrow.ZeroAddress.selector);
+        new CozyBetEscrow(IERC20(address(0)), owners, admin);
+    }
+
+    function test_Constructor_RevertsOnZeroAdmin() public {
+        address[4] memory owners = [owner1, owner2, owner3, owner4];
+        vm.expectRevert(CozyBetEscrow.ZeroAddress.selector);
+        new CozyBetEscrow(IERC20(address(usdc)), owners, address(0));
+    }
+
+    function test_Constructor_RevertsOnZeroOwner() public {
+        address[4] memory owners = [owner1, address(0), owner3, owner4];
+        vm.expectRevert(CozyBetEscrow.ZeroAddress.selector);
+        new CozyBetEscrow(IERC20(address(usdc)), owners, admin);
+    }
+
+    function test_Constructor_DefaultsCorrect() public view {
+        assertEq(escrow.defaultFeeBps(), 250);
+        assertEq(escrow.minDiscountedFeeBps(), 150);
+        assertEq(escrow.arbiterMinFee(), 100e6);
+        assertEq(escrow.arbiterFeeBpsOfPot(), 100);
+        assertEq(escrow.treasuryOwners(0), owner1);
+        assertEq(escrow.treasuryOwners(3), owner4);
+    }
+
+    // -----------------------------------------------------------------
+    // initializeBet
+    // -----------------------------------------------------------------
+
+    function test_InitializeBet_HappyPath() public {
+        vm.prank(resolver);
+        escrow.initializeBet(BET_ID, STAKE, alice, bob);
+        CozyBetEscrow.Bet memory b = escrow.getBet(BET_ID);
+        assertEq(b.amount, STAKE);
+        assertEq(b.challenger, alice);
+        assertEq(b.accepter, bob);
+        assertEq(b.challengerFeeBps, 250);
+        assertEq(b.accepterFeeBps, 250);
+        assertTrue(b.status == CozyBetEscrow.BetStatus.Pending);
+    }
+
+    function test_InitializeBet_RevertsIfDuplicate() public {
+        vm.prank(resolver);
+        escrow.initializeBet(BET_ID, STAKE, alice, bob);
+        vm.prank(resolver);
+        vm.expectRevert(CozyBetEscrow.BetAlreadyExists.selector);
+        escrow.initializeBet(BET_ID, STAKE, alice, bob);
+    }
+
+    function test_InitializeBet_RevertsIfZeroAmount() public {
+        vm.prank(resolver);
+        vm.expectRevert(CozyBetEscrow.AmountZero.selector);
+        escrow.initializeBet(BET_ID, 0, alice, bob);
+    }
+
+    function test_InitializeBet_RevertsIfSameParticipants() public {
+        vm.prank(resolver);
+        vm.expectRevert(CozyBetEscrow.SameAddresses.selector);
+        escrow.initializeBet(BET_ID, STAKE, alice, alice);
+    }
+
+    function test_InitializeBet_RevertsIfNotResolver() public {
+        vm.prank(carol);
+        vm.expectRevert();
+        escrow.initializeBet(BET_ID, STAKE, alice, bob);
+    }
+
+    // -----------------------------------------------------------------
+    // deposit
+    // -----------------------------------------------------------------
+
+    function _initBet() internal {
+        vm.prank(resolver);
+        escrow.initializeBet(BET_ID, STAKE, alice, bob);
+    }
+
+    function test_Deposit_BothSidesGoesToFunded() public {
+        _initBet();
+        vm.prank(alice);
+        escrow.deposit(BET_ID);
+        CozyBetEscrow.Bet memory b1 = escrow.getBet(BET_ID);
+        assertTrue(b1.challengerDeposited);
+        assertFalse(b1.accepterDeposited);
+        assertTrue(b1.status == CozyBetEscrow.BetStatus.Pending);
+
+        vm.prank(bob);
+        escrow.deposit(BET_ID);
+        CozyBetEscrow.Bet memory b2 = escrow.getBet(BET_ID);
+        assertTrue(b2.accepterDeposited);
+        assertTrue(b2.status == CozyBetEscrow.BetStatus.Funded);
+        assertEq(usdc.balanceOf(address(escrow)), STAKE * 2);
+    }
+
+    function test_Deposit_RevertsForNonParticipant() public {
+        _initBet();
+        vm.prank(carol);
+        vm.expectRevert(CozyBetEscrow.NotParticipant.selector);
+        escrow.deposit(BET_ID);
+    }
+
+    function test_Deposit_RevertsOnDoubleDeposit() public {
+        _initBet();
+        vm.prank(alice);
+        escrow.deposit(BET_ID);
+        vm.prank(alice);
+        vm.expectRevert(CozyBetEscrow.AlreadyDeposited.selector);
+        escrow.deposit(BET_ID);
+    }
+
+    function test_Deposit_RevertsIfBetNotInitialized() public {
+        vm.prank(alice);
+        vm.expectRevert(CozyBetEscrow.InvalidState.selector);
+        escrow.deposit(BET_ID);
+    }
+
+    // -----------------------------------------------------------------
+    // resolve (happy path + fees)
+    // -----------------------------------------------------------------
+
+    function _fundedBet() internal {
+        _initBet();
+        vm.prank(alice);
+        escrow.deposit(BET_ID);
+        vm.prank(bob);
+        escrow.deposit(BET_ID);
+    }
+
+    function test_Resolve_HappyPath_FeeSplit4Ways() public {
+        _fundedBet();
+
+        uint256 pot = STAKE * 2;
+        uint256 expectedFee = (STAKE * 250 + STAKE * 250) / 10_000; // 5e6 (5 mUSDC, 2.5%)
+        uint256 expectedPayout = pot - expectedFee;
+
+        uint256 aliceBefore = usdc.balanceOf(alice);
+
+        vm.prank(resolver);
+        escrow.resolve(BET_ID, alice);
+
+        assertEq(usdc.balanceOf(alice), aliceBefore + expectedPayout);
+        // 5e6 / 4 = 1_250_000 each (5_000_000 splits cleanly)
+        assertEq(usdc.balanceOf(owner1), expectedFee / 4);
+        assertEq(usdc.balanceOf(owner2), expectedFee / 4);
+        assertEq(usdc.balanceOf(owner3), expectedFee / 4);
+        assertEq(usdc.balanceOf(owner4), expectedFee / 4);
+        assertEq(usdc.balanceOf(address(escrow)), 0);
+
+        CozyBetEscrow.Bet memory b = escrow.getBet(BET_ID);
+        assertTrue(b.status == CozyBetEscrow.BetStatus.Resolved);
+        assertEq(b.winner, alice);
+    }
+
+    function test_Resolve_FeeRemainderGoesToOwner1() public {
+        // Construct a fee not divisible by 4. With per-side fee bps,
+        // fee = stake * (cBps + aBps) / 10000. To leave a remainder mod 4,
+        // pick bps + stake so the result has low bits set. stake=7,
+        // both bps=250: fee = 7 * 500 / 10000 = 0 (truncates). Use larger
+        // bps via reducing one side.
+        // stake=1003, both bps=251 (after admin tweak): fee = 1003*502/10000 = 50 (truncates from 50.3506).
+        // 50 % 4 = 2 → owner1 gets +2 atoms.
+        vm.prank(admin);
+        escrow.setDefaultFeeBps(251);
+
+        uint256 stake = 1003;
+        usdc.mint(alice, stake);
+        usdc.mint(bob, stake);
+        vm.prank(resolver);
+        escrow.initializeBet(777, stake, alice, bob);
+        vm.prank(alice);
+        escrow.deposit(777);
+        vm.prank(bob);
+        escrow.deposit(777);
+
+        uint256 fee = (stake * 251 + stake * 251) / 10_000; // 50
+        uint256 perOwner = fee / 4; // 12
+        uint256 remainder = fee - perOwner * 4; // 2
+
+        vm.prank(resolver);
+        escrow.resolve(777, alice);
+
+        assertEq(usdc.balanceOf(owner1), perOwner + remainder);
+        assertEq(usdc.balanceOf(owner2), perOwner);
+        assertEq(usdc.balanceOf(owner3), perOwner);
+        assertEq(usdc.balanceOf(owner4), perOwner);
+    }
+
+    function test_Resolve_RevertsIfNotFunded() public {
+        _initBet();
+        vm.prank(resolver);
+        vm.expectRevert(CozyBetEscrow.InvalidState.selector);
+        escrow.resolve(BET_ID, alice);
+    }
+
+    function test_Resolve_RevertsIfWinnerNotParticipant() public {
+        _fundedBet();
+        vm.prank(resolver);
+        vm.expectRevert(CozyBetEscrow.WinnerNotParticipant.selector);
+        escrow.resolve(BET_ID, carol);
+    }
+
+    function test_Resolve_RevertsIfNotResolver() public {
+        _fundedBet();
+        vm.prank(carol);
+        vm.expectRevert();
+        escrow.resolve(BET_ID, alice);
+    }
+
+    // -----------------------------------------------------------------
+    // setFeeBpsForSide
+    // -----------------------------------------------------------------
+
+    function test_SetFeeBps_AppliesDiscount() public {
+        _initBet();
+        vm.prank(resolver);
+        escrow.setFeeBpsForSide(BET_ID, alice, 150); // 1.5%
+        CozyBetEscrow.Bet memory b = escrow.getBet(BET_ID);
+        assertEq(b.challengerFeeBps, 150);
+        assertEq(b.accepterFeeBps, 250); // unchanged
+    }
+
+    function test_SetFeeBps_PerParticipantMath() public {
+        _initBet();
+        vm.prank(resolver);
+        escrow.setFeeBpsForSide(BET_ID, alice, 150);
+        // bob unchanged at 250
+        vm.prank(alice);
+        escrow.deposit(BET_ID);
+        vm.prank(bob);
+        escrow.deposit(BET_ID);
+
+        // Fee = STAKE * (150 + 250) / 10000 = STAKE * 400 / 10000 = STAKE * 4 / 100
+        // STAKE = 100e6 → fee = 4e6
+        uint256 expectedFee = (STAKE * 150 + STAKE * 250) / 10_000;
+        assertEq(expectedFee, 4e6);
+        uint256 pot = STAKE * 2;
+        uint256 expectedPayout = pot - expectedFee;
+
+        uint256 winnerBefore = usdc.balanceOf(alice);
+        vm.prank(resolver);
+        escrow.resolve(BET_ID, alice);
+        assertEq(usdc.balanceOf(alice), winnerBefore + expectedPayout);
+    }
+
+    function test_SetFeeBps_RevertsIfBelowFloor() public {
+        _initBet();
+        vm.prank(resolver);
+        vm.expectRevert(CozyBetEscrow.InvalidFeeBps.selector);
+        escrow.setFeeBpsForSide(BET_ID, alice, 100); // below 150 floor
+    }
+
+    function test_SetFeeBps_RevertsIfNotReducing() public {
+        _initBet();
+        vm.prank(resolver);
+        escrow.setFeeBpsForSide(BET_ID, alice, 200);
+        // Try to set back to a higher value
+        vm.prank(resolver);
+        vm.expectRevert(CozyBetEscrow.InvalidFeeBps.selector);
+        escrow.setFeeBpsForSide(BET_ID, alice, 250);
+    }
+
+    function test_SetFeeBps_RevertsForNonParticipant() public {
+        _initBet();
+        vm.prank(resolver);
+        vm.expectRevert(CozyBetEscrow.NotParticipant.selector);
+        escrow.setFeeBpsForSide(BET_ID, carol, 150);
+    }
+
+    // -----------------------------------------------------------------
+    // draw
+    // -----------------------------------------------------------------
+
+    function test_Draw_RefundsFullStakeNoFee() public {
+        _fundedBet();
+        uint256 aliceBefore = usdc.balanceOf(alice);
+        uint256 bobBefore = usdc.balanceOf(bob);
+
+        vm.prank(resolver);
+        escrow.draw(BET_ID);
+
+        assertEq(usdc.balanceOf(alice) - aliceBefore, STAKE);
+        assertEq(usdc.balanceOf(bob) - bobBefore, STAKE);
+        // Treasury owners get nothing
+        assertEq(usdc.balanceOf(owner1), 0);
+        assertEq(usdc.balanceOf(address(escrow)), 0);
+
+        CozyBetEscrow.Bet memory b = escrow.getBet(BET_ID);
+        assertTrue(b.status == CozyBetEscrow.BetStatus.Drawn);
+    }
+
+    function test_Draw_RevertsIfNotFunded() public {
+        _initBet();
+        vm.prank(resolver);
+        vm.expectRevert(CozyBetEscrow.InvalidState.selector);
+        escrow.draw(BET_ID);
+    }
+
+    // -----------------------------------------------------------------
+    // refund
+    // -----------------------------------------------------------------
+
+    function test_Refund_OneSidedDeposit() public {
+        _initBet();
+        vm.prank(alice);
+        escrow.deposit(BET_ID);
+        uint256 aliceBefore = usdc.balanceOf(alice);
+        vm.prank(resolver);
+        escrow.refund(BET_ID);
+        assertEq(usdc.balanceOf(alice) - aliceBefore, STAKE);
+        // bob never deposited; gets nothing extra
+        CozyBetEscrow.Bet memory b = escrow.getBet(BET_ID);
+        assertTrue(b.status == CozyBetEscrow.BetStatus.Refunded);
+    }
+
+    function test_Refund_BothSides() public {
+        _fundedBet();
+        uint256 aliceBefore = usdc.balanceOf(alice);
+        uint256 bobBefore = usdc.balanceOf(bob);
+        vm.prank(resolver);
+        escrow.refund(BET_ID);
+        assertEq(usdc.balanceOf(alice) - aliceBefore, STAKE);
+        assertEq(usdc.balanceOf(bob) - bobBefore, STAKE);
+    }
+
+    function test_Refund_RevertsAfterResolve() public {
+        _fundedBet();
+        vm.prank(resolver);
+        escrow.resolve(BET_ID, alice);
+        vm.prank(resolver);
+        vm.expectRevert(CozyBetEscrow.InvalidState.selector);
+        escrow.refund(BET_ID);
+    }
+
+    // -----------------------------------------------------------------
+    // arbiterResolve
+    // -----------------------------------------------------------------
+
+    function test_ArbiterResolve_FeeFromMin_OnSmallPot() public {
+        // Pot = 200e6 = $200. 1% = $2 = 2e6. Min = $100 = 100e6.
+        // So arbiter fee = 100e6 (min wins).
+        _fundedBet();
+        uint256 pot = STAKE * 2;
+        uint256 expectedArbiterFee = 100e6;
+        uint256 standardFee = (STAKE * 250 + STAKE * 250) / 10_000; // 5e6
+        uint256 expectedPayout = pot - expectedArbiterFee - standardFee;
+        uint256 aliceBefore = usdc.balanceOf(alice);
+        uint256 arbiterBefore = usdc.balanceOf(arbiter);
+
+        vm.prank(arbiter);
+        escrow.arbiterResolve(BET_ID, alice);
+
+        assertEq(usdc.balanceOf(arbiter) - arbiterBefore, expectedArbiterFee);
+        assertEq(usdc.balanceOf(alice) - aliceBefore, expectedPayout);
+    }
+
+    function test_ArbiterResolve_FeeFromBps_OnLargePot() public {
+        // Pot = 200_000e6 = $200k. 1% = $2k = 2_000e6. Min = $100. bps wins.
+        uint256 stake = 100_000e6; // 100k mUSDC each
+        usdc.mint(alice, stake);
+        usdc.mint(bob, stake);
+
+        vm.prank(resolver);
+        escrow.initializeBet(99, stake, alice, bob);
+        vm.prank(alice);
+        escrow.deposit(99);
+        vm.prank(bob);
+        escrow.deposit(99);
+
+        uint256 pot = stake * 2;
+        uint256 byBps = (pot * 100) / 10_000; // 1% = 2_000e6
+        uint256 expectedArbiterFee = byBps; // 2_000e6 > 100e6 min
+        uint256 standardFee = (stake * 250 + stake * 250) / 10_000;
+        uint256 expectedPayout = pot - expectedArbiterFee - standardFee;
+        uint256 aliceBefore = usdc.balanceOf(alice);
+        uint256 arbiterBefore = usdc.balanceOf(arbiter);
+
+        vm.prank(arbiter);
+        escrow.arbiterResolve(99, alice);
+
+        assertEq(usdc.balanceOf(arbiter) - arbiterBefore, expectedArbiterFee);
+        assertEq(usdc.balanceOf(alice) - aliceBefore, expectedPayout);
+    }
+
+    function test_ArbiterResolve_RevertsIfNotArbiter() public {
+        _fundedBet();
+        vm.prank(carol);
+        vm.expectRevert();
+        escrow.arbiterResolve(BET_ID, alice);
+    }
+
+    function test_ArbiterResolve_RevertsOnTinyPot() public {
+        // Pot smaller than arbiter min fee — should revert
+        uint256 tiny = 10e6; // $10 stake; pot $20 < $100 min
+        usdc.mint(alice, tiny);
+        usdc.mint(bob, tiny);
+        vm.prank(resolver);
+        escrow.initializeBet(199, tiny, alice, bob);
+        vm.prank(alice);
+        escrow.deposit(199);
+        vm.prank(bob);
+        escrow.deposit(199);
+        vm.prank(arbiter);
+        vm.expectRevert(CozyBetEscrow.PotTooSmallForArbiter.selector);
+        escrow.arbiterResolve(199, alice);
+    }
+
+    // -----------------------------------------------------------------
+    // Admin updates
+    // -----------------------------------------------------------------
+
+    function test_Admin_SetTreasuryOwner() public {
+        address newOwner = makeAddr("new-owner");
+        vm.prank(admin);
+        escrow.setTreasuryOwner(2, newOwner);
+        assertEq(escrow.treasuryOwners(2), newOwner);
+    }
+
+    function test_Admin_OnlyAdmin() public {
+        vm.prank(carol);
+        vm.expectRevert();
+        escrow.setDefaultFeeBps(300);
+    }
+
+    function test_Admin_SetDefaultFeeBps() public {
+        vm.prank(admin);
+        escrow.setDefaultFeeBps(300);
+        assertEq(escrow.defaultFeeBps(), 300);
+    }
+}
