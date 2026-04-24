@@ -16,7 +16,9 @@
     "program:deploy": "pnpm --filter @cozy-bet/program deploy"
   },
   "devDependencies": {
+    "@coinbase/cdp-sdk": "^1.48.2",
     "@types/node": "^22.9.0",
+    "dotenv": "^16.4.7",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",
     "viem": "^2.48.4"
