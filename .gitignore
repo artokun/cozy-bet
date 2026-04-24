@@ -1,0 +1,22 @@
+node_modules
+.pnpm-store
+dist
+build
+.next
+.turbo
+.env
+.env.local
+*.log
+.DS_Store
+
+# Secrets & keypairs — never commit
+keys/
+*.keypair.json
+
+# Anchor
+apps/program/target
+apps/program/.anchor
+apps/program/test-ledger
+
+# Postgres data
+pgdata/

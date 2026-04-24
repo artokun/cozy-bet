@@ -1,0 +1,26 @@
+{
+  "name": "cozy-bet",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Discord crypto-escrow betting bot (Solana MVP)",
+  "packageManager": "pnpm@9.15.2",
+  "scripts": {
+    "dev:bot": "pnpm --filter @cozy-bet/bot dev",
+    "dev:web": "pnpm --filter @cozy-bet/web dev",
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "db:migrate": "pnpm --filter @cozy-bet/db migrate",
+    "db:studio": "pnpm --filter @cozy-bet/db studio",
+    "program:build": "pnpm --filter @cozy-bet/program build",
+    "program:test": "pnpm --filter @cozy-bet/program test",
+    "program:deploy": "pnpm --filter @cozy-bet/program deploy"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "tsx": "^4.19.2",
+    "@types/node": "^22.9.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

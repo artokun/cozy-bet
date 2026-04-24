@@ -1,0 +1,18 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cozy-bet-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cozy
+      POSTGRES_PASSWORD: cozy
+      POSTGRES_DB: cozy_bet
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cozy -d cozy_bet"]
+      interval: 5s
+      timeout: 5s
+      retries: 10

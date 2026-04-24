@@ -1,0 +1,65 @@
+import { z } from "zod";
+import { config as loadDotenv } from "dotenv";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const thisFile = fileURLToPath(import.meta.url);
+// Repo root is 4 levels up from apps/bot/src/env.ts
+const repoRoot = path.resolve(path.dirname(thisFile), "../../..");
+loadDotenv({ path: path.join(repoRoot, ".env") });
+
+const schema = z.object({
+  SOLANA_CLUSTER: z.enum(["devnet", "testnet", "mainnet-beta"]).default("devnet"),
+  SOLANA_RPC_URL: z.string().url().default("https://api.devnet.solana.com"),
+  PROGRAM_ID: z.string().min(32),
+  MOCK_USDC_MINT: z.string().min(32),
+  TREASURY_PUBKEY: z.string().min(32),
+  RESOLVER_KEYPAIR_PATH: z.string().default("./keys/bot-resolver.json"),
+
+  DISCORD_BOT_TOKEN: z.string().min(1),
+  DISCORD_APPLICATION_ID: z.string().min(1),
+  DISCORD_TEST_GUILD_ID: z.string().optional(),
+  DISCORD_GUILD_ALLOWLIST: z.string().optional(), // comma-separated
+  USER_ALLOWLIST_ENABLED: z
+    .string()
+    .default("false")
+    .transform((v) => v === "true"),
+  ADMIN_DISCORD_IDS: z.string().optional(), // comma-separated discord user ids
+
+  DATABASE_URL: z.string().url(),
+
+  WEB_PUBLIC_URL: z.string().url().default("http://localhost:3000"),
+  BOT_API_PORT: z
+    .string()
+    .default("3001")
+    .transform((v) => parseInt(v, 10)),
+
+  BET_FEE_BPS: z
+    .string()
+    .default("250")
+    .transform((v) => parseInt(v, 10)),
+
+  // Auto-refund a bet stuck in `pending` for this many minutes. 0 = disabled.
+  WATCHDOG_PENDING_REFUND_MINUTES: z
+    .string()
+    .default("0")
+    .transform((v) => parseInt(v, 10)),
+  WATCHDOG_INTERVAL_SECONDS: z
+    .string()
+    .default("120")
+    .transform((v) => parseInt(v, 10)),
+});
+
+export const env = schema.parse(process.env);
+
+export function allowedGuilds(): Set<string> | null {
+  if (!env.DISCORD_GUILD_ALLOWLIST) return null;
+  return new Set(env.DISCORD_GUILD_ALLOWLIST.split(",").map((s) => s.trim()));
+}
+
+export function isAdmin(discordId: string): boolean {
+  if (!env.ADMIN_DISCORD_IDS) return false;
+  return env.ADMIN_DISCORD_IDS.split(",")
+    .map((s) => s.trim())
+    .includes(discordId);
+}

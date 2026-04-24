@@ -1,0 +1,61 @@
+import {
+  type ButtonInteraction,
+  type ChatInputCommandInteraction,
+} from "discord.js";
+import {
+  handleAccept,
+  handleAdminResolve,
+  handleBalance,
+  handleCancel,
+  handleDecline,
+  handleHelp,
+  handleLinkWallet,
+  handleMyBets,
+  handleReconcile,
+  handleResolve,
+  handleSaybet,
+} from "./commands.js";
+
+export async function routeSlash(i: ChatInputCommandInteraction) {
+  switch (i.commandName) {
+    case "saybet":
+      return handleSaybet(i);
+    case "mybets":
+      return handleMyBets(i);
+    case "resolve":
+      return handleResolve(i);
+    case "cancel":
+      return handleCancel(i);
+    case "linkwallet":
+      return handleLinkWallet(i);
+    case "balance":
+      return handleBalance(i);
+    case "help":
+      return handleHelp(i);
+    case "adminresolve":
+      return handleAdminResolve(i);
+    case "reconcile":
+      return handleReconcile(i);
+  }
+}
+
+export async function routeButton(i: ButtonInteraction) {
+  const [action, betIdStr] = i.customId.split(":");
+  if (!action || !betIdStr) {
+    await i.reply({ content: "Invalid button id.", ephemeral: true });
+    return;
+  }
+  let betId: bigint;
+  try {
+    betId = BigInt(betIdStr);
+  } catch {
+    await i.reply({ content: "Invalid bet id.", ephemeral: true });
+    return;
+  }
+  switch (action) {
+    case "accept":
+      return handleAccept(i, betId);
+    case "decline":
+      return handleDecline(i, betId);
+  }
+}
