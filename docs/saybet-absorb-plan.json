@@ -1,0 +1,114 @@
+{
+  "nodes": [
+    {
+      "key": "s-deadline-field",
+      "title": "DB: add deadline column + bet_events for nudges/expiry",
+      "type": "task",
+      "priority": 2,
+      "parent": "cozy-bet-ppf",
+      "description": "Add `deadline` (timestamp w/tz) + `nudge_24h_sent_at` + `nudge_2h_sent_at` columns to bets table. Add /saybet --deadline option (default: createdAt + 7 days, max 30 days). Drizzle migration."
+    },
+    {
+      "key": "s-deadline-nudge",
+      "title": "Bot: deadline nudge cron (24h + 2h pre-deadline DMs)",
+      "type": "feature",
+      "priority": 2,
+      "parent": "cozy-bet-ppf",
+      "description": "Saybet's #1 dispute-prevention feature. Cron in apps/bot/src/watchdog.ts: every minute, find bets entering the 24h-or-2h-pre-deadline window and DM both participants. Idempotent via the timestamps from s-deadline-field. Message includes outcome contract + /resolve link.\n\nAlso add post-deadline auto-action: at deadline, if Funded but not resolved, status → 'awaiting-arbiter' and DM both sides (and admins). At deadline + 24h, if still no resolve, auto-call arbiter.\n\nWhy: the bot enforces resolution mechanically via the contract, but ghosting still costs the user the arbiter fee. Nudges keep most bets out of arbitration."
+    },
+    {
+      "key": "s-outcome-repeat",
+      "title": "Bot: repeat outcome contract 3x (preview / deposit / resolve DM)",
+      "type": "feature",
+      "priority": 2,
+      "parent": "cozy-bet-ppf",
+      "description": "Show the canonical bet description identically at every touchpoint:\n1. /saybet challenge embed (already done)\n2. Fund-link DM (add — currently just shows amount)\n3. Pre-resolve DM at deadline nudge (depends on s-deadline-nudge)\n4. Resolution DM (add to claimWinner notify)\n\nThe bet description is sacred — never paraphrased, always quoted verbatim with a `>` block. Eliminates 'I thought we were betting on X' disputes."
+    },
+    {
+      "key": "s-status-cmd",
+      "title": "Bot: /status <bet_id> command",
+      "type": "feature",
+      "priority": 2,
+      "parent": "cozy-bet-ppf",
+      "description": "Per-bet detail embed (color-coded by status, deposit progress, deadline countdown, tx links if resolved). Public (non-ephemeral) so anyone in the channel can check. Use the existing renderBetCard helper but full-detail mode."
+    },
+    {
+      "key": "s-leaderboard",
+      "title": "Bot: /leaderboard command",
+      "type": "feature",
+      "priority": 2,
+      "parent": "cozy-bet-ppf",
+      "description": "Top 10 leaderboard with toggles: by total wagered, by total won, by win rate (min 5 bets). DB query against bets+bet_events. Ephemeral by default; non-ephemeral via /leaderboard public:true."
+    },
+    {
+      "key": "s-reliability",
+      "title": "Bot: reliability score on bet preview",
+      "type": "feature",
+      "priority": 2,
+      "parent": "cozy-bet-ppf",
+      "description": "When user A challenges user B, show on the announcement card: 'A: resolves 92% within 24h · 14 bets settled · 0 disputes' next to each name. Replaces KYC-shaped trust with social-graph trust at zero infra cost.\n\nFormula draft: % of (resolved+drawn) within 24h of becoming Funded, out of all completed (resolved+drawn+refunded) bets. Disputes counted separately. Cache per-user for 5 min."
+    },
+    {
+      "key": "s-disambig-chat",
+      "title": "Bot: conversational LLM disambig (multi-turn until terms locked)",
+      "type": "feature",
+      "priority": 1,
+      "parent": "cozy-bet-ppf",
+      "description": "Replaces single-shot LLM interpretation with a guided multi-turn conversation that runs BEFORE the bet is created on-chain.\n\nFlow:\n1. /saybet @user $50 \"lakers win tonight\" — verbatim quote stored.\n2. Bot opens a private group thread (or DMs both with a shared canonical message) and proposes a disambig sentence.\n3. Each side can: ✅ confirm | ✏️ refine (free-text follow-up) | ❌ abort.\n4. On refinement, bot updates the canonical sentence with the new constraint (overtime, postponement, etc.).\n5. When BOTH have ✅ confirmed the same canonical sentence, status moves to 'terms-agreed'.\n6. Then signature flow (s-eip712-sig) runs.\n7. Only after both signatures, bot calls initializeBet on-chain with the termsHash baked in.\n\nLLM: Claude Haiku 4.5 via @anthropic-ai/sdk. Prompt anchors: verbatim user phrasing is sacred (preserved in DB, not paraphrased). Canonical sentence is the only thing edited via refinement. System prompt rejects ambiguous outcomes (e.g. 'I'll feel happy' → 'Cannot disambig').\n\nNew DB columns on bets: terms_canonical (text), terms_status enum (pending|agreed|aborted), challenger_terms_confirmed_at, accepter_terms_confirmed_at. New table: bet_disambig_turns (bet_id, actor, kind: propose|refine|confirm|abort, content_text, created_at).\n\nCost: ~500 output tokens / bet ≈ $0.0004 per bet. Effectively free."
+    },
+    {
+      "key": "s-voice-pass",
+      "title": "Bot: voice + embed style pass (personality)",
+      "type": "task",
+      "priority": 3,
+      "parent": "cozy-bet-ppf",
+      "description": "Apply consistent voice across all bot messages. Saybet uses 'roadman voice' (UK slang) + Spotify-themed colors. Pick a voice for cozy-bet (TBD with PM) and refactor render.ts + announce.ts to use it everywhere. Low priority — functional embeds work."
+    },
+    {
+      "key": "s-dm-fallback",
+      "title": "Bot: DM-fallback resilience pattern",
+      "type": "task",
+      "priority": 2,
+      "parent": "cozy-bet-ppf",
+      "description": "When the bot fails to post in a channel (perms, rate limit, channel deleted), fall back to DMing the participants with the same content. Wrap channel.send + msg.edit calls in a helper that catches + retries via DM. Audit: log fallbacks to bet_events with type='channel_fallback'."
+    },
+    {
+      "key": "s-shortcode",
+      "title": "Bot: short-hash bet IDs in user-facing commands",
+      "type": "task",
+      "priority": 2,
+      "parent": "cozy-bet-ppf",
+      "description": "Internal bet_id is u64 timestamp/random. User-facing IDs should be 5-6 char base32 hashes (e.g. K7M2R). Add `shortcode` column (unique index) to bets table; populate on insert. /resolve, /cancel, /status, /adminresolve, /reconcile accept either format. Recommend showing shortcode in announcement embeds, full bigint in /admin contexts only."
+    },
+    {
+      "key": "s-eip712-sig",
+      "title": "Bot+Web+Contract: EIP-712 signed outcome contract",
+      "type": "feature",
+      "priority": 1,
+      "parent": "cozy-bet-ppf",
+      "description": "Both participants EIP-712 sign the canonical terms (output of s-disambig-chat) in their wallet before the bet is created on-chain. Hash of the signed payload is committed to the Bet struct on-chain. Signatures live off-chain in DB but are recoverable + verifiable by anyone.\n\nTypedData domain: { name: 'CozyBet', version: '1', chainId, verifyingContract }\nMessage: { betId, challenger, accepter, amount, token, deadline, termsCanonical, termsHash }\nWhere termsHash = keccak256(abi.encodePacked(termsCanonical)).\n\nWeb (apps/web/app/agree/[betId]): page shows the canonical terms + Accept button → uses wagmi useSignTypedData → POSTs sig to bot → bot verifies via viem verifyTypedData → stores in DB. Once both sigs collected, bot calls initializeBet(betId, ..., termsHash) on-chain.\n\nContract change (amends e2-escrow-sol post-deploy or in v2.1): add bytes32 termsHash field to Bet struct + an optional initializeBet overload that takes it. Existing tests still pass (the field defaults to bytes32(0) for unsigned bets).\n\nDB additions: bets.terms_hash, bets.challenger_signature, bets.accepter_signature, bets.signed_at fields.\n\nLegal posture: EIP-712 sigs qualify as electronic signatures under ESIGN/UETA (US) and as advanced electronic signatures under eIDAS (EU). More binding than image-based signatures."
+    },
+    {
+      "key": "s-contract-terms-hash",
+      "title": "Contract: add termsHash to Bet struct + signature-required mode",
+      "type": "task",
+      "priority": 1,
+      "parent": "cozy-bet-ppf",
+      "description": "Amend CozyBetEscrow.sol: add bytes32 termsHash to Bet struct. New initializeBet overload: initializeBet(betId, amount, challenger, accepter, termsHash). Preserve original signature for backward compatibility. Update getBet to expose termsHash. Add 3-4 Foundry tests covering termsHash storage + emit in BetInitialized event.\n\nThis is a small contract change but blocks s-eip712-sig because the on-chain commit needs the field. Best to do BEFORE deploy to Base Sepolia (cozy-bet-idb) to avoid an upgrade dance."
+    },
+    {
+      "key": "s-user-mutex",
+      "title": "Bot: per-user serialization for state-mutating actions",
+      "type": "task",
+      "priority": 2,
+      "parent": "cozy-bet-ppf",
+      "description": "When a user double-clicks a button or fires two slash commands quickly, ensure they don't race. Use in-process Map<discordId, Promise> as a serialization queue per-user. Wrap interaction handlers with `serializeFor(userId, async () => {...})`. Log when waits exceed 250ms.\n\nWhy: even though the contract is reentrancy-protected, the DB transitions can race (two parallel claimWinner calls could both think they're the first claim). Serializing per-user side-steps it."
+    }
+  ],
+  "edges": [
+    {"from_key": "s-deadline-nudge", "to_key": "s-deadline-field", "type": "blocks"},
+    {"from_key": "s-outcome-repeat", "to_key": "s-deadline-nudge", "type": "blocks"},
+    {"from_key": "s-eip712-sig", "to_key": "s-disambig-chat", "type": "blocks"},
+    {"from_key": "s-eip712-sig", "to_key": "s-contract-terms-hash", "type": "blocks"}
+  ]
+}
