@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "cozy_bet",
+  "project_id": "4f9b204a-fffc-474d-91a9-27801db09c94"
+}
