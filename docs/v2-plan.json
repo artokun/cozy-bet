@@ -1,0 +1,166 @@
+{
+  "nodes": [
+    {
+      "key": "epic",
+      "title": "v2: pivot to Base + mass-adoption features",
+      "type": "epic",
+      "priority": 1,
+      "description": "Strategic rewrite: pivot from Solana/Anchor to Base (Coinbase L2) with Coinbase Smart Wallet for gasless UX. Adds draw outcomes, arbiter dispute resolution, 4-owner treasury split, per-participant social-share fee discount (2.5%→1.5%), winner dunk GIFs with auto-social-post, Discord OAuth on the web, and a public bet explorer.\n\nDecisions locked in:\n- Chain: Base (Solidity + Foundry)\n- Social fee discount: per-participant (each side independently earns 1% off their half)\n- Arbiter: reuse ADMIN_DISCORD_IDS\n- Draw: full refund, no fee\n- 4 treasury wallets split fee evenly (0.625% each at 2.5% total)\n- Arbiter fee: max($100, 1% of pot), comes out of pot\n\nMVP (Solana) code stays in repo as reference; DB schema + Discord bot state machine + flows.ts carry over unchanged."
+    },
+
+    {
+      "key": "e1-foundry",
+      "title": "Set up Foundry workspace (apps/contracts)",
+      "type": "task",
+      "priority": 1,
+      "parent": "epic",
+      "description": "Scaffold apps/contracts/ with Foundry (forge). Install OpenZeppelin contracts, solmate for gas-efficient SafeTransferLib. Add pnpm script `contracts:build`, `contracts:test`. Delete apps/program/ or rename to apps/program-solana-reference/ for archival."
+    },
+    {
+      "key": "e2-escrow-sol",
+      "title": "Port escrow to Solidity + add v2 features",
+      "type": "feature",
+      "priority": 1,
+      "parent": "epic",
+      "description": "Write CozyBetEscrow.sol. Port the 4 Anchor instructions to Solidity functions + add v2 features.\n\n**Constructor/init**: owner admin + 4 owner treasury addresses + arbiter role (set to admin) + base fee_bps (default 250).\n\n**Functions:**\n- initializeBet(betId, amount, challenger, accepter, challengerFeeBps, accepterFeeBps, tokenAddr): creates Bet struct, per-side fee bps (default 250 each, reduced to 150 if they've shared)\n- deposit(betId): requires msg.sender == challenger|accepter, pulls USDC via transferFrom to this contract\n- resolve(betId, winner): resolver-only. Computes fee = sum of per-side fees (default 500bps of pot), split 4 ways to treasuries, rest to winner.\n- draw(betId): resolver-only. Refunds each side full stake (no fee).\n- refund(betId): resolver-only. Refunds deposited sides.\n- arbiterResolve(betId, winner): arbiter-only. Computes arbiter fee = max(ARBITER_MIN_USDC, pot/100), sends to arbiter address, rest split normally.\n- setFeeBpsForSide(betId, side, bps): resolver-only. Applies social-share discount.\n\n**Access control:** Use OpenZeppelin AccessControl. Roles: DEFAULT_ADMIN_ROLE, RESOLVER_ROLE, ARBITER_ROLE.\n\n**Storage:** Bet struct with packed fields. Mapping betId → Bet.\n\n**USDC:** ERC20 interface, takes mint (aka token) address at init. Use Circle's Base Sepolia USDC: 0x036CbD53842c5426634e7929541eC2318f3dCF7e.\n\n**Events:** BetInitialized, Deposited, Resolved, Drawn, Refunded, ArbiterResolved, FeeDiscountApplied.\n\n**Tests (Foundry):** mirror the 4 Solana scenarios + draw + arbiter + discount. At least 15 test cases."
+    },
+    {
+      "key": "e3-deploy-sepolia",
+      "title": "Deploy to Base Sepolia testnet + init config",
+      "type": "task",
+      "priority": 1,
+      "parent": "epic",
+      "description": "Use Foundry's `forge create` or `forge script` to deploy CozyBetEscrow to Base Sepolia (chainId 84532). RPC: https://sepolia.base.org.\n\nGet testnet USDC from Circle's Base Sepolia faucet (https://faucet.circle.com) and distribute to test wallets.\n\nWrite scripts/contracts/deploy.s.sol and scripts/contracts/init-config.s.sol. Add pnpm script `contracts:deploy:sepolia`.\n\nBase Sepolia faucet for ETH (gas): https://www.coinbase.com/faucets/base-ethereum-sepolia-faucet"
+    },
+    {
+      "key": "e4-viem-client",
+      "title": "Swap @solana/web3.js → viem + generate contract types",
+      "type": "task",
+      "priority": 1,
+      "parent": "epic",
+      "description": "Replace Solana client libs with EVM equivalents.\n\n- `apps/bot/src/solana.ts` → `apps/bot/src/chain.ts`: use viem's walletClient + publicClient. Load bot-resolver as hex private key. Helpers: initializeBetOnChain, resolveOnChain, refundOnChain, drawOnChain, arbiterResolveOnChain, fetchBetOnChain.\n- `packages/shared/src/`: export ABI + contract address from a central location. Use wagmi-cli or foundry's `forge build` to generate TS types from the ABI.\n- `apps/web/lib/program.ts` → `apps/web/lib/contract.ts`: use wagmi hooks (useWriteContract, useReadContract).\n\nAll state machine + DB + Discord code in flows.ts stays unchanged — just the chain adapter changes."
+    },
+    {
+      "key": "e5-smart-wallet",
+      "title": "Coinbase Smart Wallet + wagmi integration on web",
+      "type": "task",
+      "priority": 1,
+      "parent": "epic",
+      "description": "Replace @solana/wallet-adapter with wagmi + Coinbase Smart Wallet SDK.\n\n- Install wagmi, @coinbase/wallet-sdk (Smart Wallet preset), viem.\n- Update apps/web/app/providers.tsx: WagmiProvider with Base Sepolia chain + Coinbase Smart Wallet connector.\n- Update /fund/[betId]/page.tsx: use `useWriteContract` from wagmi.\n- Update /link/[sessionId]/page.tsx: use `useSignMessage` from wagmi.\n\nCoinbase Smart Wallet is a passkey-backed wallet — users just click a button, authenticate with their device biometric, and they have a wallet. No seed phrase."
+    },
+
+    {
+      "key": "b1-draw",
+      "title": "Bot: /draw slash command + flow",
+      "type": "feature",
+      "priority": 2,
+      "parent": "epic",
+      "description": "New slash command /draw <bet_id>. When one participant runs it, record their claim. When both participants have claimed draw, call draw() on-chain → DB status → 'drawn' (new enum value), announce in channel.\n\nAdd `drawn` to BetStatus enum (both in shared + db pgEnum + migration). Add `drawClaim` tracking fields to bets table (like challengerClaimsWinner/accepterClaimsWinner but for draw).\n\nUpdate announcement card rendering to handle 'drawn' state.\n\nFlow mirrors claimWinner — needs parallel in flows.ts."
+    },
+    {
+      "key": "b2-arbiter-req",
+      "title": "Bot: /requestarbiter + dispute flow",
+      "type": "feature",
+      "priority": 2,
+      "parent": "epic",
+      "description": "New slash command /requestarbiter <bet_id>. Either participant can request an arbiter when bet is Funded or Disputed.\n\nOn request:\n1. DB status → 'disputed' (if not already)\n2. DM all admins in ADMIN_DISCORD_IDS with bet details + both users' Discord tags + 'claim evidence via DM' buttons\n3. Channel announcement: 'Arbiter requested. Admin will review.'\n\nAdd `arbiter_requested_at` + `arbiter_discord_id` fields to bets table."
+    },
+    {
+      "key": "b3-arbiter-decide",
+      "title": "Bot: Arbiter proof collection + decision flow",
+      "type": "feature",
+      "priority": 2,
+      "parent": "epic",
+      "description": "When an admin claims an arbiter case, they DM both participants with a prompt: 'Please reply with evidence (screenshots, links). You have 48h.' Participants' replies to the bot are stored (bet_events with type='arbiter_evidence').\n\nAdmin views evidence via /arbiter-review <bet_id> (shows all collected evidence in one ephemeral embed). Then /arbiter-decide <bet_id> <winner|draw> makes the call, which invokes arbiterResolve() on-chain (pays arbiter fee from pot, distributes rest).\n\nAdd arbiter_fee field on resolve events so the UI can show it."
+    },
+    {
+      "key": "b4-social-share",
+      "title": "Bot: /share + X (Twitter) verification + discount",
+      "type": "feature",
+      "priority": 2,
+      "parent": "epic",
+      "description": "After a bet is Accepted (but not yet Funded), participants can run /share <bet_id>. Bot returns an ephemeral message with:\n- A prefilled X/Twitter tweet text including a hashtag + the bet description + link to /bet/[id]\n- A link to X compose UI with that text prefilled\n- A /confirm-share <bet_id> <tweet_url> follow-up\n\nWhen user posts the /confirm-share, bot hits X API v2 (GET /2/tweets/:id) to verify the tweet exists, comes from the claimed user's X account (linked ahead of time via /linktwitter, scope tweet.read users.read), and contains our hashtag. On verification, call setFeeBpsForSide() on-chain (reduces that side's fee from 250 to 150 bps).\n\nAdd `x_handle` field to users table. Add `share_tweet_url` field to bets table (per-side: challenger_share_url, accepter_share_url).\n\nEnv: X_BEARER_TOKEN, X_CLIENT_ID/SECRET for OAuth."
+    },
+    {
+      "key": "b5-dunk-gif",
+      "title": "Bot: Winner dunk GIF picker + social post",
+      "type": "feature",
+      "priority": 2,
+      "parent": "epic",
+      "description": "After resolve (winner is set), DM winner with a StringSelectMenu containing ~10 curated trash-talk GIFs from a config file (apps/bot/src/dunks.ts: array of {url, label}). Winner picks one; bot:\n1. Posts in the bet's channel: '<winner> dunks on <loser>: <gif>' embed.\n2. DMs winner a Twitter share button with prefilled tweet including the GIF url.\n\nAdd `dunk_gif_url` and `dunk_posted_at` fields to bets table. GIF list in config, replaceable without redeploy via env or a CSV file."
+    },
+
+    {
+      "key": "w1-discord-oauth",
+      "title": "Web: Discord OAuth login (replaces magic-link)",
+      "type": "feature",
+      "priority": 2,
+      "parent": "epic",
+      "description": "Install NextAuth or @auth/next. Add DiscordProvider. New routes:\n- /login: 'Continue with Discord' button\n- /api/auth/[...nextauth]: OAuth callback\n- Session includes discord_id, discord_username, avatar\n\nReplace the magic-link /link/[sessionId] route's flow: user lands on /link (via Discord DM link with Discord OAuth redirect), signs in with Discord, connects Smart Wallet, signs ownership message, POSTs to bot to register wallet.\n\nRationale: removes the 15-min magic-link session + manual discord_id entry. Users prove their Discord identity via OAuth."
+    },
+    {
+      "key": "w2-bet-explorer",
+      "title": "Web: Public bet explorer / verifier page",
+      "type": "feature",
+      "priority": 2,
+      "parent": "epic",
+      "description": "New Next.js route /explorer showing the last 100 bets (or a paged list). Columns: bet id, status, amount, challenger Discord tag (or anonymous), accepter, winner, resolution tx (link to basescan.org/tx/X). Read-only; auth-free.\n\nAlso /bet/[id] (already exists) gets a 'Verify on-chain' link + shows tx hash.\n\nImplements the 'system or website for tracking blocks and verifying transactions' from the spec."
+    },
+    {
+      "key": "w3-account",
+      "title": "Web: User account page (wallet + history + share status)",
+      "type": "task",
+      "priority": 3,
+      "parent": "epic",
+      "description": "Signed-in user (via Discord OAuth) gets /me: shows their linked wallet, USDC balance, active + historical bets, X account status, current fee rate (2.5% vs 1.5% if share verified)."
+    },
+
+    {
+      "key": "o1-treasury",
+      "title": "Ops: 4-owner treasury withdraw + reserve logic",
+      "type": "feature",
+      "priority": 2,
+      "parent": "epic",
+      "description": "Contract keeps a threshold of USDC + ETH on-hand for ops (recommend $100 USDC + 0.01 ETH). When fees collected exceed the threshold, distribute split evenly to 4 owner wallets automatically on resolve. Or: manual /treasury-sweep admin command that triggers distribution.\n\nImplement as part of resolve() in the contract OR as a separate withdraw(). Tradeoff: per-resolve auto-split adds a little gas cost but saves admin clicks.\n\nAdd TREASURY_ADDRESSES env (comma-separated), MIN_RESERVE_USDC env."
+    },
+    {
+      "key": "o2-paymaster",
+      "title": "Ops: Coinbase Paymaster for gasless UX",
+      "type": "feature",
+      "priority": 2,
+      "parent": "epic",
+      "description": "Configure Coinbase Developer Platform Paymaster so user-initiated transactions (deposit, social share-trigger, etc.) are sponsored by us. Users never need ETH.\n\nSteps: create Coinbase Developer Platform account, create Paymaster project, get API key, whitelist our contract + function selectors (deposit, etc.), integrate Paymaster URL into wagmi config.\n\nCost to us: ~$0.005 per transaction. Budget monitoring required."
+    },
+    {
+      "key": "o3-admin-dash",
+      "title": "Ops: Admin dashboard for arbiter decisions",
+      "type": "task",
+      "priority": 3,
+      "parent": "epic",
+      "description": "Web page /admin (Discord-OAuth-gated to ADMIN_DISCORD_IDS): list of pending arbiter cases with collected evidence. One-click resolve actions.\n\nAlternative to doing everything in Discord DMs. Cleaner for managing disputes at scale."
+    }
+  ],
+
+  "edges": [
+    {"from_key": "e2-escrow-sol", "to_key": "e1-foundry", "type": "blocks"},
+    {"from_key": "e3-deploy-sepolia", "to_key": "e2-escrow-sol", "type": "blocks"},
+    {"from_key": "e4-viem-client", "to_key": "e3-deploy-sepolia", "type": "blocks"},
+    {"from_key": "e5-smart-wallet", "to_key": "e4-viem-client", "type": "blocks"},
+
+    {"from_key": "b1-draw", "to_key": "e4-viem-client", "type": "blocks"},
+    {"from_key": "b2-arbiter-req", "to_key": "e4-viem-client", "type": "blocks"},
+    {"from_key": "b3-arbiter-decide", "to_key": "e4-viem-client", "type": "blocks"},
+    {"from_key": "b4-social-share", "to_key": "e4-viem-client", "type": "blocks"},
+
+    {"from_key": "b3-arbiter-decide", "to_key": "b2-arbiter-req", "type": "blocks"},
+
+    {"from_key": "w2-bet-explorer", "to_key": "e3-deploy-sepolia", "type": "blocks"},
+
+    {"from_key": "w3-account", "to_key": "w1-discord-oauth", "type": "blocks"},
+
+    {"from_key": "o1-treasury", "to_key": "e2-escrow-sol", "type": "blocks"},
+    {"from_key": "o2-paymaster", "to_key": "e5-smart-wallet", "type": "blocks"},
+
+    {"from_key": "o3-admin-dash", "to_key": "b3-arbiter-decide", "type": "blocks"}
+  ]
+}
