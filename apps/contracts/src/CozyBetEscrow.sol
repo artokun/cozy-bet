@@ -73,6 +73,12 @@ contract CozyBetEscrow is AccessControl, ReentrancyGuard {
         bool accepterDeposited;
         BetStatus status;
         address winner;
+        /// @dev keccak256 of the canonical bet terms (the disambig sentence
+        /// agreed by both parties off-chain via the chat flow). Both
+        /// participants EIP-712 sign the canonical sentence; signatures live
+        /// off-chain in DB, but THIS hash on-chain proves the bet was created
+        /// against a specific set of terms. Set to bytes32(0) for legacy bets.
+        bytes32 termsHash;
     }
 
     mapping(uint256 => Bet) public bets;
@@ -82,7 +88,11 @@ contract CozyBetEscrow is AccessControl, ReentrancyGuard {
     // ---------------------------------------------------------------
 
     event BetInitialized(
-        uint256 indexed betId, address indexed challenger, address indexed accepter, uint256 amount
+        uint256 indexed betId,
+        address indexed challenger,
+        address indexed accepter,
+        uint256 amount,
+        bytes32 termsHash
     );
     event Deposited(uint256 indexed betId, address indexed depositor, uint256 amount);
     event Funded(uint256 indexed betId);
@@ -175,10 +185,39 @@ contract CozyBetEscrow is AccessControl, ReentrancyGuard {
     // Lifecycle (resolver-only)
     // ---------------------------------------------------------------
 
+    /// @notice Legacy entry — creates a bet with an empty termsHash. Provided
+    ///         for backward compatibility with v1 callers + tests. New
+    ///         integrations should pass a real termsHash via the overload.
     function initializeBet(uint256 betId, uint256 amount, address challenger, address accepter)
         external
         onlyRole(RESOLVER_ROLE)
     {
+        _initBet(betId, amount, challenger, accepter, bytes32(0));
+    }
+
+    /// @notice Create a bet bound to a hash of the canonical bet terms (the
+    ///         agreed disambig sentence from the off-chain chat flow). Both
+    ///         participants must have EIP-712 signed the same canonical
+    ///         sentence off-chain; the bot verifies and stores the sigs in
+    ///         DB before invoking this. The hash on-chain is the cryptographic
+    ///         link between the on-chain escrow and the off-chain agreement.
+    function initializeBet(
+        uint256 betId,
+        uint256 amount,
+        address challenger,
+        address accepter,
+        bytes32 termsHash
+    ) external onlyRole(RESOLVER_ROLE) {
+        _initBet(betId, amount, challenger, accepter, termsHash);
+    }
+
+    function _initBet(
+        uint256 betId,
+        uint256 amount,
+        address challenger,
+        address accepter,
+        bytes32 termsHash
+    ) internal {
         if (bets[betId].status != BetStatus.None) revert BetAlreadyExists();
         if (amount == 0) revert AmountZero();
         if (challenger == address(0) || accepter == address(0)) revert ZeroAddress();
@@ -191,8 +230,9 @@ contract CozyBetEscrow is AccessControl, ReentrancyGuard {
         b.challengerFeeBps = defaultFeeBps;
         b.accepterFeeBps = defaultFeeBps;
         b.status = BetStatus.Pending;
+        b.termsHash = termsHash;
 
-        emit BetInitialized(betId, challenger, accepter, amount);
+        emit BetInitialized(betId, challenger, accepter, amount, termsHash);
     }
 
     function deposit(uint256 betId) external nonReentrant {

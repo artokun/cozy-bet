@@ -124,6 +124,68 @@ contract CozyBetEscrowTest is Test {
         escrow.initializeBet(BET_ID, STAKE, alice, bob);
     }
 
+    function test_InitializeBet_LegacyOverload_TermsHashZero() public {
+        vm.prank(resolver);
+        escrow.initializeBet(BET_ID, STAKE, alice, bob);
+        CozyBetEscrow.Bet memory b = escrow.getBet(BET_ID);
+        assertEq(b.termsHash, bytes32(0));
+    }
+
+    function test_InitializeBet_WithTermsHash_StoresIt() public {
+        bytes32 hashOfTerms = keccak256(
+            bytes("Resolves YES if LAL beats HOU 2026-04-24 per nba.com box score, including OT.")
+        );
+        vm.prank(resolver);
+        escrow.initializeBet(BET_ID, STAKE, alice, bob, hashOfTerms);
+        CozyBetEscrow.Bet memory b = escrow.getBet(BET_ID);
+        assertEq(b.termsHash, hashOfTerms);
+        // Other fields populated as usual
+        assertEq(b.amount, STAKE);
+        assertEq(b.challenger, alice);
+        assertEq(b.accepter, bob);
+    }
+
+    function test_InitializeBet_WithTermsHash_EmitsEvent() public {
+        bytes32 hashOfTerms = keccak256(bytes("test terms"));
+        vm.expectEmit(true, true, true, true);
+        emit CozyBetEscrow.BetInitialized(BET_ID, alice, bob, STAKE, hashOfTerms);
+        vm.prank(resolver);
+        escrow.initializeBet(BET_ID, STAKE, alice, bob, hashOfTerms);
+    }
+
+    function test_InitializeBet_WithTermsHash_RevertsOnDuplicate() public {
+        bytes32 h = keccak256(bytes("x"));
+        vm.prank(resolver);
+        escrow.initializeBet(BET_ID, STAKE, alice, bob, h);
+        vm.prank(resolver);
+        vm.expectRevert(CozyBetEscrow.BetAlreadyExists.selector);
+        escrow.initializeBet(BET_ID, STAKE, alice, bob, h);
+    }
+
+    function test_InitializeBet_WithTermsHash_FullFlow() public {
+        // termsHash binding does not affect any downstream lifecycle —
+        // resolve, draw, refund all work the same. Smoke-test the full path.
+        bytes32 h = keccak256(bytes("alice wins iff... [agreed terms]"));
+        vm.prank(resolver);
+        escrow.initializeBet(BET_ID, STAKE, alice, bob, h);
+        vm.prank(alice);
+        escrow.deposit(BET_ID);
+        vm.prank(bob);
+        escrow.deposit(BET_ID);
+
+        uint256 aliceBefore = usdc.balanceOf(alice);
+        vm.prank(resolver);
+        escrow.resolve(BET_ID, alice);
+
+        // Hash survives through resolution
+        CozyBetEscrow.Bet memory b = escrow.getBet(BET_ID);
+        assertEq(b.termsHash, h);
+        assertTrue(b.status == CozyBetEscrow.BetStatus.Resolved);
+        // And winner got paid
+        uint256 expectedPayout = STAKE * 2 - (STAKE * 250 + STAKE * 250) / 10_000;
+        assertEq(usdc.balanceOf(alice) - aliceBefore, expectedPayout);
+    }
+
     // -----------------------------------------------------------------
     // deposit
     // -----------------------------------------------------------------
