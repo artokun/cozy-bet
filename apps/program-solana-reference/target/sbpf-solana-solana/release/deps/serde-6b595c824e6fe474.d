@@ -1,0 +1,14 @@
+/Users/art/code/cozy-bet/apps/program/target/sbpf-solana-solana/release/deps/libserde-6b595c824e6fe474.rmeta: /Users/art/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/lib.rs /Users/art/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/integer128.rs /Users/art/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/mod.rs /Users/art/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/de.rs /Users/art/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/ser.rs /Users/art/code/cozy-bet/apps/program/target/sbpf-solana-solana/release/build/serde-9933e1ed5d84c542/out/private.rs
+
+/Users/art/code/cozy-bet/apps/program/target/sbpf-solana-solana/release/deps/libserde-6b595c824e6fe474.rlib: /Users/art/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/lib.rs /Users/art/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/integer128.rs /Users/art/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/mod.rs /Users/art/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/de.rs /Users/art/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/ser.rs /Users/art/code/cozy-bet/apps/program/target/sbpf-solana-solana/release/build/serde-9933e1ed5d84c542/out/private.rs
+
+/Users/art/code/cozy-bet/apps/program/target/sbpf-solana-solana/release/deps/serde-6b595c824e6fe474.d: /Users/art/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/lib.rs /Users/art/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/integer128.rs /Users/art/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/mod.rs /Users/art/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/de.rs /Users/art/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/ser.rs /Users/art/code/cozy-bet/apps/program/target/sbpf-solana-solana/release/build/serde-9933e1ed5d84c542/out/private.rs
+
+/Users/art/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/lib.rs:
+/Users/art/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/integer128.rs:
+/Users/art/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/mod.rs:
+/Users/art/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/de.rs:
+/Users/art/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/ser.rs:
+/Users/art/code/cozy-bet/apps/program/target/sbpf-solana-solana/release/build/serde-9933e1ed5d84c542/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/art/code/cozy-bet/apps/program/target/sbpf-solana-solana/release/build/serde-9933e1ed5d84c542/out

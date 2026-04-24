@@ -88,7 +88,9 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
-  apps/program:
+  apps/contracts: {}
+
+  apps/program-solana-reference:
     dependencies:
       '@coral-xyz/anchor':
         specifier: ^0.31.1
