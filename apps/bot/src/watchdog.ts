@@ -23,16 +23,14 @@ import { updateAnnouncement } from "./discord/announce.js";
  * arbitrates — but nudges keep most users from drifting into the arbiter
  * fee window.
  */
-export function startWatchdog(client: Client): NodeJS.Timeout | null {
+export function startWatchdog(client: Client): NodeJS.Timeout {
   const refundMin = env.WATCHDOG_PENDING_REFUND_MINUTES;
   const nudgeEnabled = env.WATCHDOG_NUDGE_ENABLED;
-  if (refundMin <= 0 && !nudgeEnabled) {
-    console.log("[watchdog] disabled — no enabled features");
-    return null;
-  }
+  // Cancel-expiry is always on — there's no env switch to disable it,
+  // because we promise users a 24h auto-expire on /cancel requests.
   const intervalMs = Math.max(30, env.WATCHDOG_INTERVAL_SECONDS) * 1000;
   console.log(
-    `[watchdog] enabled — refund=${refundMin > 0 ? `${refundMin}m` : "off"}, nudge=${nudgeEnabled ? "on" : "off"}, interval=${intervalMs / 1000}s`,
+    `[watchdog] enabled — refund=${refundMin > 0 ? `${refundMin}m` : "off"}, nudge=${nudgeEnabled ? "on" : "off"}, cancel-expiry=on, interval=${intervalMs / 1000}s`,
   );
 
   const tick = async () => {

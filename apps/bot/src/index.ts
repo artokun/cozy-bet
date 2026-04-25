@@ -57,7 +57,7 @@ const watchdogTimer = startWatchdog(client);
 
 async function shutdown() {
   console.log("[bot] shutdown");
-  if (watchdogTimer) clearInterval(watchdogTimer);
+  clearInterval(watchdogTimer);
   await new Promise<void>((r) => apiServer.close(() => r()));
   await client.destroy();
   process.exit(0);

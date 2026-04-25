@@ -12,6 +12,7 @@ import {
   acceptBet,
   adminResolve,
   agreeCancel,
+  agreeCounter,
   claimDraw,
   claimOpenBet,
   claimWinner,
@@ -19,6 +20,7 @@ import {
   createWalletLinkSession,
   declineBet,
   denyCancel,
+  denyCounter,
   findBetByIdOrShortcode,
   getBet,
   getUser,
@@ -27,6 +29,7 @@ import {
   leaderboardData,
   listActiveBetsFor,
   proposeBet,
+  proposeCounter,
   reconcileBet,
   reliabilityLabel,
   requestCancel,
@@ -34,7 +37,7 @@ import {
 } from "../flows.js";
 import { isAdmin } from "../env.js";
 import { connection, mockUsdcMint } from "../solana.js";
-import { updateAnnouncement } from "./announce.js";
+import { safeChannelSend, updateAnnouncement } from "./announce.js";
 import { PublicKey } from "@solana/web3.js";
 import {
   getAssociatedTokenAddressSync,
@@ -101,6 +104,22 @@ export const drawCmd = new SlashCommandBuilder()
       .setName("bet_id")
       .setDescription("bet id or shortcode")
       .setRequired(true),
+  );
+
+export const counterCmd = new SlashCommandBuilder()
+  .setName("counter")
+  .setDescription("Counter-propose new terms before the other side accepts")
+  .addStringOption((o) =>
+    o.setName("bet_id").setDescription("bet id or shortcode").setRequired(true),
+  )
+  .addNumberOption((o) =>
+    o.setName("amount").setDescription("new amount in mUSDC").setMinValue(1),
+  )
+  .addStringOption((o) =>
+    o
+      .setName("description")
+      .setDescription("new bet description")
+      .setMaxLength(200),
   );
 
 export const linkwallet = new SlashCommandBuilder()
@@ -171,6 +190,7 @@ export const commandDefinitions: RESTPostAPIApplicationCommandsJSONBody[] = [
   mybets.toJSON(),
   resolveCmd.toJSON(),
   drawCmd.toJSON(),
+  counterCmd.toJSON(),
   cancelCmd.toJSON(),
   linkwallet.toJSON(),
   balanceCmd.toJSON(),
@@ -365,31 +385,167 @@ export async function handleCancel(i: ChatInputCommandInteraction) {
       return;
     }
     const counterparty = `<@${counterpartyId}>`;
-    await i.editReply(
-      `🛑 Cancel requested for \`${bet.shortcode}\`. ${counterparty} has 24h to agree or deny.`,
-    );
-    // DM counterparty with Agree/Deny buttons.
+    const dmContent = `<@${i.user.id}> requested to cancel bet \`${bet.shortcode}\`:\n> ${bet.description}\n\nAgree → both sides refunded. Deny → bet stays active.`;
+    const components = [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`cancel-agree:${bet.id}`)
+          .setLabel("✅ Agree to cancel")
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`cancel-deny:${bet.id}`)
+          .setLabel("❌ Deny")
+          .setStyle(ButtonStyle.Danger),
+      ),
+    ];
+    let dmDelivered = false;
     try {
       const u = await i.client.users.fetch(counterpartyId);
-      await u.send({
-        content: `<@${i.user.id}> requested to cancel bet \`${bet.shortcode}\`:\n> ${bet.description}\n\nAgree → both sides refunded. Deny → bet stays active.`,
-        components: [
-          new ActionRowBuilder<ButtonBuilder>().addComponents(
-            new ButtonBuilder()
-              .setCustomId(`cancel-agree:${bet.id}`)
-              .setLabel("✅ Agree to cancel")
-              .setStyle(ButtonStyle.Success),
-            new ButtonBuilder()
-              .setCustomId(`cancel-deny:${bet.id}`)
-              .setLabel("❌ Deny")
-              .setStyle(ButtonStyle.Danger),
-          ),
-        ],
-      });
+      await u.send({ content: dmContent, components });
+      dmDelivered = true;
     } catch {}
+    // Fallback: post the request + buttons in the bet's channel so the
+    // counterparty can act even with DMs disabled. safeChannelSend logs a
+    // 'channel_fallback' event so we can detect chronic delivery problems.
+    if (!dmDelivered) {
+      try {
+        await safeChannelSend(i.client, {
+          channelId: bet.channelId,
+          payload: {
+            content: `${counterparty} (couldn't DM you) — ${dmContent}`,
+            components,
+          },
+          fallbackRecipients: [counterpartyId],
+          betId: bet.id,
+        });
+      } catch {}
+    }
+    await i.editReply(
+      `🛑 Cancel requested for \`${bet.shortcode}\`. ${counterparty} has 24h to agree or deny${dmDelivered ? "" : " (DM failed → posted in channel)"}.`,
+    );
     await updateAnnouncement(i.client, betId);
   } catch (e: any) {
     await i.editReply(`Error: ${e?.message ?? String(e)}`);
+  }
+}
+
+export async function handleCounter(i: ChatInputCommandInteraction) {
+  const betIdStr = i.options.getString("bet_id", true);
+  const newAmountDollars = i.options.getNumber("amount");
+  const newDescription = i.options.getString("description");
+  await i.deferReply();
+  const betId = await resolveBetIdFromInput(i, betIdStr);
+  if (betId === null) return;
+  if (newAmountDollars === null && newDescription === null) {
+    await i.editReply("Provide at least one of `amount` or `description`.");
+    return;
+  }
+  try {
+    const newAmountAtoms =
+      newAmountDollars !== null ? dollarsToAtoms(newAmountDollars) : null;
+    const bet = await proposeCounter({
+      betId,
+      requesterId: i.user.id,
+      newAmount: newAmountAtoms,
+      newDescription,
+    });
+    if (!bet) {
+      await i.editReply("Bet not found after counter.");
+      return;
+    }
+    const counterpartyId =
+      bet.challengerId === i.user.id ? bet.accepterId : bet.challengerId;
+    if (!counterpartyId) {
+      await i.editReply("No counterparty to counter against (open bet?).");
+      return;
+    }
+    const lines = [`<@${i.user.id}> countered bet \`${bet.shortcode}\`:`];
+    if (newAmountAtoms !== null) {
+      lines.push(
+        `· stake: ${formatAmount(BigInt(bet.amount))} → **${formatAmount(newAmountAtoms)}** mUSDC`,
+      );
+    }
+    if (newDescription !== null) {
+      lines.push(`· description:`);
+      lines.push(`> was: ${bet.description}`);
+      lines.push(`> now: ${newDescription}`);
+    }
+    lines.push("");
+    lines.push("Agree → terms updated. Deny → terms stay as they were.");
+    const dmContent = lines.join("\n");
+    const components = [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`counter-agree:${bet.id}`)
+          .setLabel("✅ Agree to counter")
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`counter-deny:${bet.id}`)
+          .setLabel("❌ Deny")
+          .setStyle(ButtonStyle.Danger),
+      ),
+    ];
+    let dmDelivered = false;
+    try {
+      const u = await i.client.users.fetch(counterpartyId);
+      await u.send({ content: dmContent, components });
+      dmDelivered = true;
+    } catch {}
+    if (!dmDelivered) {
+      try {
+        await safeChannelSend(i.client, {
+          channelId: bet.channelId,
+          payload: {
+            content: `<@${counterpartyId}> (couldn't DM) — ${dmContent}`,
+            components,
+          },
+          fallbackRecipients: [counterpartyId],
+          betId: bet.id,
+        });
+      } catch {}
+    }
+    await i.editReply(
+      `↗️ Counter proposed for \`${bet.shortcode}\`. <@${counterpartyId}> can agree or deny${dmDelivered ? "" : " (DM failed → posted in channel)"}.`,
+    );
+  } catch (e: any) {
+    await i.editReply(`Error: ${e?.message ?? String(e)}`);
+  }
+}
+
+export async function handleCounterAgree(i: ButtonInteraction, betId: bigint) {
+  await i.deferUpdate();
+  try {
+    const bet = await agreeCounter(betId, i.user.id);
+    await i.editReply({ components: [] });
+    await i.followUp({
+      content: bet
+        ? `✅ Counter accepted on \`${bet.shortcode}\`. New terms locked in.`
+        : `✅ Counter accepted.`,
+      ephemeral: false,
+    });
+    await updateAnnouncement(i.client, betId);
+  } catch (e: any) {
+    await i.followUp({
+      content: `Error: ${e?.message ?? String(e)}`,
+      ephemeral: true,
+    });
+  }
+}
+
+export async function handleCounterDeny(i: ButtonInteraction, betId: bigint) {
+  await i.deferUpdate();
+  try {
+    await denyCounter(betId, i.user.id);
+    await i.editReply({ components: [] });
+    await i.followUp({
+      content: `❌ Counter denied — original terms stand.`,
+      ephemeral: false,
+    });
+  } catch (e: any) {
+    await i.followUp({
+      content: `Error: ${e?.message ?? String(e)}`,
+      ephemeral: true,
+    });
   }
 }
 

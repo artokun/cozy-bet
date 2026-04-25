@@ -57,6 +57,13 @@
       "when": 1777094057544,
       "tag": "0007_talented_jazinda",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1777096039464,
+      "tag": "0008_adorable_maggott",
+      "breakpoints": true
     }
   ]
 }

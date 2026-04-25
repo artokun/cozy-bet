@@ -655,6 +655,140 @@ export async function adminResolve(
 }
 
 /**
+ * Single-round counter-proposal. Either participant can call this while the
+ * bet is still in 'proposed' state to amend the amount + description; the
+ * counterparty gets Agree/Deny. On Agree, the bet's amount/description (and
+ * canonical, if LLM is on) update; on Deny, terms stay as they were.
+ *
+ * Multi-round counter-back can be done by the receiver calling /counter
+ * again with their own changes.
+ */
+export async function proposeCounter(args: {
+  betId: bigint;
+  requesterId: string;
+  newAmount: bigint | null;
+  newDescription: string | null;
+}) {
+  const d = db();
+  const bet = await getBet(args.betId);
+  if (!bet) throw new Error("bet not found");
+  if (bet.status !== BetStatus.Proposed) {
+    throw new Error(
+      `bet is ${bet.status} — counter only works before either side accepts`,
+    );
+  }
+  if (
+    args.requesterId !== bet.challengerId &&
+    args.requesterId !== bet.accepterId
+  ) {
+    throw new Error("not a participant");
+  }
+  if (bet.counterAt) {
+    throw new Error("a counter proposal is already open — agree or deny first");
+  }
+  if (args.newAmount === null && args.newDescription === null) {
+    throw new Error("nothing to counter (provide amount or description)");
+  }
+  if (args.newAmount !== null && args.newAmount <= 0n) {
+    throw new Error("amount must be positive");
+  }
+  await d
+    .update(bets)
+    .set({
+      counterAmount: args.newAmount,
+      counterDescription: args.newDescription,
+      counterBy: args.requesterId,
+      counterAt: new Date(),
+    })
+    .where(eq(bets.id, args.betId));
+  await d.insert(betEvents).values({
+    betId: args.betId,
+    actorDiscordId: args.requesterId,
+    eventType: "counter_proposed",
+    payload: {
+      newAmount: args.newAmount?.toString() ?? null,
+      newDescription: args.newDescription,
+    },
+  });
+  return await getBet(args.betId);
+}
+
+export async function agreeCounter(betId: bigint, agreerId: string) {
+  const d = db();
+  const bet = await getBet(betId);
+  if (!bet) throw new Error("bet not found");
+  if (!bet.counterAt || !bet.counterBy) {
+    throw new Error("no counter proposal open");
+  }
+  if (agreerId === bet.counterBy) {
+    throw new Error("requester cannot self-agree");
+  }
+  if (
+    agreerId !== bet.challengerId &&
+    agreerId !== bet.accepterId
+  ) {
+    throw new Error("not a participant");
+  }
+  if (bet.status !== BetStatus.Proposed) {
+    throw new Error(`bet is ${bet.status} — counter no longer applicable`);
+  }
+  // Apply the counter. If description changed, optionally re-disambig.
+  const patch: Partial<typeof bets.$inferInsert> = {
+    counterAmount: null,
+    counterDescription: null,
+    counterBy: null,
+    counterAt: null,
+  };
+  if (bet.counterAmount !== null) patch.amount = bet.counterAmount;
+  if (bet.counterDescription !== null) {
+    patch.description = bet.counterDescription;
+    // Re-run disambig on the new description if LLM is configured.
+    const r = await disambig({
+      userPhrase: bet.counterDescription,
+      challengerTag: bet.challengerId,
+      accepterTag: bet.accepterId ?? "any taker",
+      todayIso: new Date().toISOString().slice(0, 10),
+    });
+    if (r.kind !== "unresolvable") {
+      patch.termsCanonical = r.canonical;
+    }
+  }
+  await d.update(bets).set(patch).where(eq(bets.id, betId));
+  await d.insert(betEvents).values({
+    betId,
+    actorDiscordId: agreerId,
+    eventType: "counter_agreed",
+  });
+  return await getBet(betId);
+}
+
+export async function denyCounter(betId: bigint, denierId: string) {
+  const d = db();
+  const bet = await getBet(betId);
+  if (!bet) throw new Error("bet not found");
+  if (!bet.counterAt || !bet.counterBy) {
+    throw new Error("no counter proposal open");
+  }
+  if (denierId === bet.counterBy) {
+    throw new Error("requester cannot self-deny");
+  }
+  await d
+    .update(bets)
+    .set({
+      counterAmount: null,
+      counterDescription: null,
+      counterBy: null,
+      counterAt: null,
+    })
+    .where(eq(bets.id, betId));
+  await d.insert(betEvents).values({
+    betId,
+    actorDiscordId: denierId,
+    eventType: "counter_denied",
+  });
+}
+
+/**
  * Either participant requests cancel. The counterparty has 24h to Agree
  * or Deny. Returns the bet with cancel_requested_* set.
  */

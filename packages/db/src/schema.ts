@@ -71,6 +71,14 @@ export const bets = pgTable(
      *  fires. On Deny, the request is cleared. */
     cancelRequestedAt: timestamp("cancel_requested_at", { withTimezone: true }),
     cancelRequestedBy: text("cancel_requested_by"),
+    /** Single-round counter-proposal. Either party can /counter while the bet
+     *  is still in 'proposed' state. Other party gets Agree/Deny buttons.
+     *  On Agree → update amount/description, clear counter_*, bet stays
+     *  proposed (other side then runs Accept). On Deny → clear counter_*. */
+    counterAmount: bigint("counter_amount", { mode: "bigint" }),
+    counterDescription: text("counter_description"),
+    counterBy: text("counter_by"),
+    counterAt: timestamp("counter_at", { withTimezone: true }),
     /** Short user-facing bet id (e.g. "K7M2RX"). Unique per row. Lowercase
      *  base32-ish (no I, L, O, 0, 1 to avoid confusion). Populated on insert. */
     shortcode: text("shortcode").notNull().unique(),

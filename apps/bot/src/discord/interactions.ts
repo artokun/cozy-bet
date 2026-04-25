@@ -9,6 +9,9 @@ import {
   handleCancel,
   handleCancelAgree,
   handleCancelDeny,
+  handleCounter,
+  handleCounterAgree,
+  handleCounterDeny,
   handleDecline,
   handleDoubleOrNothing,
   handleDraw,
@@ -35,6 +38,8 @@ export async function routeSlash(i: ChatInputCommandInteraction) {
       return handleDraw(i);
     case "cancel":
       return handleCancel(i);
+    case "counter":
+      return handleCounter(i);
     case "linkwallet":
       return handleLinkWallet(i);
     case "balance":
@@ -78,5 +83,9 @@ export async function routeButton(i: ButtonInteraction) {
       return handleCancelAgree(i, betId);
     case "cancel-deny":
       return handleCancelDeny(i, betId);
+    case "counter-agree":
+      return handleCounterAgree(i, betId);
+    case "counter-deny":
+      return handleCounterDeny(i, betId);
   }
 }
