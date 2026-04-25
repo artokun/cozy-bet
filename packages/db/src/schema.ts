@@ -49,9 +49,10 @@ export const bets = pgTable(
     challengerId: text("challenger_id")
       .notNull()
       .references(() => users.discordId),
-    accepterId: text("accepter_id")
-      .notNull()
-      .references(() => users.discordId),
+    /** Nullable for open bets (`/saybet` with no opponent). Once a user
+     *  claims an open bet, the accepter_id is set atomically. */
+    accepterId: text("accepter_id").references(() => users.discordId),
+    isOpen: boolean("is_open").notNull().default(false),
     // Amount in atomic units of the mint (e.g. 50_000_000 = 50 tokens @ 6 decimals).
     amount: bigint("amount", { mode: "bigint" }).notNull(),
     tokenMint: text("token_mint").notNull(),

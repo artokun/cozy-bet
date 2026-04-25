@@ -47,17 +47,21 @@ export async function updateAnnouncement(client: Client, betId: bigint) {
   const challengerRow = (
     await d.select().from(users).where(eq(users.discordId, bet.challengerId))
   )[0];
-  const accepterRow = (
-    await d.select().from(users).where(eq(users.discordId, bet.accepterId))
-  )[0];
+  const accepterRow = bet.accepterId
+    ? (await d.select().from(users).where(eq(users.discordId, bet.accepterId)))[0]
+    : null;
+
+  const accepterLabel = bet.accepterId
+    ? `<@${bet.accepterId}>`
+    : "_(open — first to claim)_";
 
   const embed = new EmbedBuilder()
-    .setTitle(`Bet #${bet.id}`)
+    .setTitle(`Bet #${bet.shortcode ?? bet.id}`)
     .setDescription(bet.description)
     .setColor(STATUS_COLORS[bet.status] ?? 0x5b8cff)
     .addFields(
       { name: "Challenger", value: `<@${bet.challengerId}>`, inline: true },
-      { name: "Accepter", value: `<@${bet.accepterId}>`, inline: true },
+      { name: "Accepter", value: accepterLabel, inline: true },
       { name: "Stake", value: `${formatAmount(BigInt(bet.amount))} mUSDC each`, inline: true },
       { name: "Status", value: STATUS_LABELS[bet.status] ?? bet.status, inline: false },
     );

@@ -1,6 +1,6 @@
 import { getDb, users, bets, betEvents, walletLinkSessions, allowlist } from "@cozy-bet/db";
 import { BetStatus, makeShortcode, isShortcode } from "@cozy-bet/shared";
-import { eq, and, or, sql } from "drizzle-orm";
+import { eq, and, or, isNull, sql } from "drizzle-orm";
 import { PublicKey } from "@solana/web3.js";
 import { nanoid } from "nanoid";
 import { env } from "./env.js";
@@ -50,7 +50,8 @@ export async function proposeBet(args: {
   guildId: string;
   channelId: string;
   challengerId: string;
-  accepterId: string;
+  /** null = open bet (anyone in channel can claim). */
+  accepterId: string | null;
   amount: bigint;
   description: string;
   tokenMint: string;
@@ -65,7 +66,7 @@ export async function proposeBet(args: {
   | { ok: false; reason: "unresolvable"; detail: string }
 > {
   await upsertUser(args.challengerId);
-  await upsertUser(args.accepterId);
+  if (args.accepterId) await upsertUser(args.accepterId);
 
   // Run disambig before creating the bet. If LLM rejects as unresolvable,
   // refuse to create the bet — better to make the user reword than lock
@@ -73,7 +74,7 @@ export async function proposeBet(args: {
   const disambigResult = await disambig({
     userPhrase: args.description,
     challengerTag: args.challengerTag ?? args.challengerId,
-    accepterTag: args.accepterTag ?? args.accepterId,
+    accepterTag: args.accepterTag ?? args.accepterId ?? "any taker",
     todayIso: new Date().toISOString().slice(0, 10),
   });
   if (disambigResult.kind === "unresolvable") {
@@ -95,6 +96,7 @@ export async function proposeBet(args: {
         channelId: args.channelId,
         challengerId: args.challengerId,
         accepterId: args.accepterId,
+        isOpen: args.accepterId === null,
         amount: args.amount,
         tokenMint: args.tokenMint,
         description: args.description,
@@ -165,6 +167,44 @@ export async function setAnnounceMessageId(betId: bigint, messageId: string) {
     .where(eq(bets.id, betId));
 }
 
+/**
+ * Atomic claim of an open bet. Sets accepter_id only if NULL (so only one
+ * concurrent claimer wins). Self-claim by challenger is rejected.
+ *
+ * Returns the bet on success; null if already claimed (race lost).
+ */
+export async function claimOpenBet(
+  betId: bigint,
+  claimantId: string,
+): Promise<typeof bets.$inferSelect | null> {
+  const d = db();
+  const bet = await getBet(betId);
+  if (!bet) throw new Error("bet not found");
+  if (!bet.isOpen) throw new Error("not an open bet");
+  if (bet.status !== BetStatus.Proposed) throw new Error(`bet is ${bet.status}`);
+  if (bet.challengerId === claimantId) {
+    throw new Error("you can't accept your own challenge");
+  }
+  await upsertUser(claimantId);
+
+  // Atomic: SET accepter_id = X WHERE id = Y AND accepter_id IS NULL
+  // postgres-js returns affected rows in `count` field on UPDATE.
+  const updated = await d
+    .update(bets)
+    .set({ accepterId: claimantId })
+    .where(and(eq(bets.id, betId), isNull(bets.accepterId)))
+    .returning();
+  if (updated.length === 0) {
+    return null; // someone else got there first
+  }
+  await d.insert(betEvents).values({
+    betId,
+    actorDiscordId: claimantId,
+    eventType: "open_claimed",
+  });
+  return updated[0]!;
+}
+
 export async function acceptBet(betId: bigint, acceptorId: string) {
   const d = db();
   const bet = await getBet(betId);
@@ -201,6 +241,7 @@ export async function initializeOnChain(betId: bigint) {
   const bet = await getBet(betId);
   if (!bet) throw new Error("bet not found");
   if (bet.status !== BetStatus.Accepted) throw new Error(`bet is ${bet.status}`);
+  if (!bet.accepterId) throw new Error("bet has no accepter yet");
   const challenger = await getUser(bet.challengerId);
   const accepter = await getUser(bet.accepterId);
   if (!challenger?.walletPubkey || !accepter?.walletPubkey) {
@@ -443,6 +484,7 @@ async function finalizeDraw(betId: bigint) {
   const d = db();
   const bet = await getBet(betId);
   if (!bet) throw new Error("bet not found");
+  if (!bet.accepterId) throw new Error("bet has no accepter");
   const challenger = await getUser(bet.challengerId);
   const accepter = await getUser(bet.accepterId);
   if (!challenger?.walletPubkey || !accepter?.walletPubkey) {
@@ -501,10 +543,11 @@ async function finalizeResolve(betId: bigint, winnerDiscordId: string) {
 
 /** Increment resolve_events for both participants. Increment resolve_score_good
  *  only if resolved within 24h of the deadline (or 24h of now if deadline
- *  isn't set). Called on every completed bet (resolved/drawn/refunded). */
+ *  isn't set). Called on every completed bet (resolved/drawn/refunded).
+ *  accepterId may be null on bets that were canceled while still open. */
 async function bumpReliability(
   challengerId: string,
-  accepterId: string,
+  accepterId: string | null,
   deadline: Date | null,
 ) {
   const d = db();
@@ -512,7 +555,8 @@ async function bumpReliability(
   const within24h = deadline
     ? Math.abs(now.getTime() - deadline.getTime()) <= 24 * 60 * 60 * 1000
     : true; // no deadline = treat as on-time
-  for (const uid of [challengerId, accepterId]) {
+  const recipients = accepterId ? [challengerId, accepterId] : [challengerId];
+  for (const uid of recipients) {
     if (within24h) {
       await d.execute(
         sql`UPDATE users SET resolve_events = resolve_events + 1, resolve_score_good = resolve_score_good + 1 WHERE discord_id = ${uid}`,
@@ -572,6 +616,7 @@ export async function refundBet(betId: bigint) {
   ) {
     throw new Error(`bet is ${bet.status}, cannot refund`);
   }
+  if (!bet.accepterId) throw new Error("bet has no accepter");
   const challenger = await getUser(bet.challengerId);
   const accepter = await getUser(bet.accepterId);
   if (!challenger?.walletPubkey || !accepter?.walletPubkey) {

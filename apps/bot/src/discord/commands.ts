@@ -9,6 +9,7 @@ import {
   acceptBet,
   adminResolve,
   claimDraw,
+  claimOpenBet,
   claimWinner,
   createWalletLinkSession,
   declineBet,
@@ -44,10 +45,7 @@ function dollarsToAtoms(dollars: number): bigint {
 
 export const saybet = new SlashCommandBuilder()
   .setName("saybet")
-  .setDescription("Challenge another user to a bet")
-  .addUserOption((o) =>
-    o.setName("user").setDescription("who you want to bet").setRequired(true),
-  )
+  .setDescription("Challenge a user (or open the bet to anyone)")
   .addNumberOption((o) =>
     o
       .setName("amount")
@@ -61,6 +59,11 @@ export const saybet = new SlashCommandBuilder()
       .setDescription("what is the bet?")
       .setMaxLength(200)
       .setRequired(true),
+  )
+  .addUserOption((o) =>
+    o
+      .setName("user")
+      .setDescription("who you want to bet (omit to open to anyone)"),
   );
 
 export const mybets = new SlashCommandBuilder()
@@ -178,39 +181,45 @@ export async function handleSaybet(i: ChatInputCommandInteraction) {
     await i.reply({ content: "Use this in a server, not DMs.", ephemeral: true });
     return;
   }
-  const target = i.options.getUser("user", true);
+  const target = i.options.getUser("user");
   const amount = i.options.getNumber("amount", true);
   const description = i.options.getString("description", true);
-  if (target.id === i.user.id) {
+  if (target && target.id === i.user.id) {
     await i.reply({ content: "You can't bet yourself.", ephemeral: true });
     return;
   }
-  if (target.bot) {
+  if (target && target.bot) {
     await i.reply({ content: "Can't bet a bot.", ephemeral: true });
     return;
   }
-  if (!(await isAllowed(i.user.id)) || !(await isAllowed(target.id))) {
+  if (!(await isAllowed(i.user.id))) {
     await i.reply({
-      content: "One of you isn't on the allowlist for this server.",
+      content: "You're not on the allowlist for this server.",
+      ephemeral: true,
+    });
+    return;
+  }
+  if (target && !(await isAllowed(target.id))) {
+    await i.reply({
+      content: `${target} isn't on the allowlist for this server.`,
       ephemeral: true,
     });
     return;
   }
 
-  // Defer BEFORE the LLM call — disambig + DB write can take >3s and the
-  // interaction token expires after 3s. Reply path below uses editReply.
+  // Defer BEFORE the LLM call — disambig + DB write can take >3s.
   await i.deferReply();
 
   const proposed = await proposeBet({
     guildId: i.guildId,
     channelId: i.channelId,
     challengerId: i.user.id,
-    accepterId: target.id,
+    accepterId: target?.id ?? null,
     amount: dollarsToAtoms(amount),
     description,
     tokenMint: mockUsdcMint.toBase58(),
     challengerTag: i.user.username,
-    accepterTag: target.username,
+    accepterTag: target?.username,
   });
   if (!proposed.ok) {
     await i.editReply({
@@ -226,11 +235,11 @@ export async function handleSaybet(i: ChatInputCommandInteraction) {
     termsCanonical.trim() !== description.trim() ? termsCanonical : null;
 
   const challengerRel = await reliabilityLabel(i.user.id);
-  const accepterRel = await reliabilityLabel(target.id);
+  const accepterRel = target ? await reliabilityLabel(target.id) : null;
   const card = renderBetCard({
     betId,
     challenger: i.user.toString(),
-    accepter: target.toString(),
+    accepter: target?.toString() ?? "_(open — anyone can claim)_",
     amount,
     description,
     canonical: showCanonical,
@@ -239,8 +248,11 @@ export async function handleSaybet(i: ChatInputCommandInteraction) {
     challengerReliability: challengerRel,
     accepterReliability: accepterRel,
   });
+  const replyContent = target
+    ? `${target}, you've been challenged. Bet code: \`${shortcode}\``
+    : `⚔️ <@${i.user.id}> is throwing it out there for **${amount} mUSDC** — first mandem to tap Accept takes the other side. Bet code: \`${shortcode}\``;
   await i.editReply({
-    content: `${target}, you've been challenged. Bet code: \`${shortcode}\``,
+    content: replyContent,
     embeds: [card.embed],
     components: [card.proposeRow(betId)],
   });
@@ -399,11 +411,16 @@ export async function handleStatus(i: ChatInputCommandInteraction) {
   }
   const tokenAmount = formatAmount(BigInt(bet.amount));
   const challengerRel = await reliabilityLabel(bet.challengerId);
-  const accepterRel = await reliabilityLabel(bet.accepterId);
+  const accepterRel = bet.accepterId
+    ? await reliabilityLabel(bet.accepterId)
+    : null;
+  const accepterTag = bet.accepterId
+    ? `<@${bet.accepterId}>${accepterRel ? ` (${accepterRel})` : ""}`
+    : "_(open — first to claim)_";
   const lines: string[] = [
     `**Bet #${bet.shortcode}** — _${bet.status}_`,
     `> ${bet.description}`,
-    `<@${bet.challengerId}>${challengerRel ? ` (${challengerRel})` : ""} vs <@${bet.accepterId}>${accepterRel ? ` (${accepterRel})` : ""}`,
+    `<@${bet.challengerId}>${challengerRel ? ` (${challengerRel})` : ""} vs ${accepterTag}`,
     `${tokenAmount} mUSDC each · pot ${(Number(BigInt(bet.amount)) / 1e6 * 2).toFixed(2)} mUSDC`,
   ];
   if (bet.deadline) {
@@ -597,22 +614,53 @@ export async function handleAccept(i: ButtonInteraction, betId: bigint) {
   await i.deferUpdate();
   const bet = await getBet(betId);
   if (!bet) return i.followUp({ content: "Bet not found.", ephemeral: true });
-  if (bet.accepterId !== i.user.id) {
+
+  // Open bet → atomically claim the accepter slot.
+  if (bet.isOpen && bet.accepterId === null) {
+    if (bet.challengerId === i.user.id) {
+      return i.followUp({
+        content: "You can't accept your own challenge.",
+        ephemeral: true,
+      });
+    }
+    if (!(await isAllowed(i.user.id))) {
+      return i.followUp({
+        content: "You're not on the allowlist for this server.",
+        ephemeral: true,
+      });
+    }
+    const claimed = await claimOpenBet(betId, i.user.id);
+    if (!claimed) {
+      return i.followUp({
+        content: "Someone else just claimed this bet first.",
+        ephemeral: true,
+      });
+    }
+  } else if (bet.accepterId !== i.user.id) {
     return i.followUp({ content: "You're not the accepter.", ephemeral: true });
   }
 
+  // Re-fetch with potentially-updated accepterId.
+  const refreshed = await getBet(betId);
+  if (!refreshed?.accepterId) {
+    return i.followUp({
+      content: "Internal error: bet still has no accepter.",
+      ephemeral: true,
+    });
+  }
+
   // Ensure both wallets are linked; if not, send link prompts.
-  const challenger = await getUser(bet.challengerId);
-  const accepter = await getUser(bet.accepterId);
+  const challenger = await getUser(refreshed.challengerId);
+  const accepter = await getUser(refreshed.accepterId);
   if (!challenger?.walletPubkey) {
-    const { url } = await createWalletLinkSession(bet.challengerId);
+    const { url } = await createWalletLinkSession(refreshed.challengerId);
     try {
-      const u = await i.client.users.fetch(bet.challengerId);
+      const u = await i.client.users.fetch(refreshed.challengerId);
       await u.send(`Link your wallet to fund your bet: ${url}`);
     } catch {}
   }
   if (!accepter?.walletPubkey) {
-    const { url } = await createWalletLinkSession(bet.accepterId);
+    const { url } = await createWalletLinkSession(refreshed.accepterId);
     try {
       await i.user.send(`Link your wallet to fund your bet: ${url}`);
     } catch {}
@@ -621,8 +669,8 @@ export async function handleAccept(i: ButtonInteraction, betId: bigint) {
   await acceptBet(betId, i.user.id);
 
   // If both wallets are linked, initialize on-chain + send fund links.
-  const c2 = await getUser(bet.challengerId);
-  const a2 = await getUser(bet.accepterId);
+  const c2 = await getUser(refreshed.challengerId);
+  const a2 = await getUser(refreshed.accepterId);
   if (c2?.walletPubkey && a2?.walletPubkey) {
     try {
       await initializeOnChain(betId);
@@ -656,7 +704,10 @@ async function sendFundLinks(i: ButtonInteraction, betId: bigint) {
     "",
     "By depositing you confirm these terms. No refunds after deposit unless both parties agree to cancel or draw.",
   ].join("\n");
-  for (const uid of [bet.challengerId, bet.accepterId]) {
+  const recipients = bet.accepterId
+    ? [bet.challengerId, bet.accepterId]
+    : [bet.challengerId];
+  for (const uid of recipients) {
     try {
       const u = await i.client.users.fetch(uid);
       await u.send(dmContent);
@@ -685,7 +736,10 @@ async function sendResolutionDms(
   ];
   if (txLink) lines.push("", `On-chain: ${txLink}`);
   const dmContent = lines.join("\n");
-  for (const uid of [bet.challengerId, bet.accepterId]) {
+  const recipients = bet.accepterId
+    ? [bet.challengerId, bet.accepterId]
+    : [bet.challengerId];
+  for (const uid of recipients) {
     try {
       const u = await i.client.users.fetch(uid);
       await u.send(dmContent);

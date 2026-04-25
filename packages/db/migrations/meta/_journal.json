@@ -36,6 +36,13 @@
       "when": 1777088090040,
       "tag": "0004_tough_leech",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1777089983510,
+      "tag": "0005_tired_chamber",
+      "breakpoints": true
     }
   ]
 }

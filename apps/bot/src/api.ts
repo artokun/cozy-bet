@@ -96,9 +96,9 @@ export function startApi(client: Client) {
     const challenger = (
       await d.select().from(users).where(eq(users.discordId, bet.challengerId))
     )[0];
-    const accepter = (
-      await d.select().from(users).where(eq(users.discordId, bet.accepterId))
-    )[0];
+    const accepter = bet.accepterId
+      ? (await d.select().from(users).where(eq(users.discordId, bet.accepterId)))[0]
+      : null;
     res.json({
       id: bet.id.toString(),
       status: bet.status,
@@ -109,10 +109,13 @@ export function startApi(client: Client) {
         discordId: bet.challengerId,
         wallet: challenger?.walletPubkey ?? null,
       },
-      accepter: {
-        discordId: bet.accepterId,
-        wallet: accepter?.walletPubkey ?? null,
-      },
+      accepter: bet.accepterId
+        ? {
+            discordId: bet.accepterId,
+            wallet: accepter?.walletPubkey ?? null,
+          }
+        : null,
+      isOpen: bet.isOpen,
       betPda: bet.betPda,
       vaultPda: bet.vaultPda,
       challengerDeposited: bet.challengerDeposited,

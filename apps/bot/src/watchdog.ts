@@ -63,7 +63,10 @@ async function tickPendingRefund(client: Client, refundMin: number) {
       console.log(`[watchdog] refunding stale bet ${b.shortcode} (id ${b.id})`);
       await refundBet(b.id);
       await updateAnnouncement(client, b.id);
-      for (const uid of [b.challengerId, b.accepterId]) {
+      const recipients = b.accepterId
+        ? [b.challengerId, b.accepterId]
+        : [b.challengerId];
+      for (const uid of recipients) {
         try {
           const u = await client.users.fetch(uid);
           await u.send(
@@ -139,7 +142,10 @@ async function sendNudge(
     window === "24h"
       ? `⏰ **${label} to go** on your bet \`${bet.shortcode}\`:\n${verbatim}\n\nMake sure you'll be around to /resolve when the time comes. If you and your counterparty disagree on the outcome, either side can request an arbiter (admin) — that costs max(\$100, 1% of pot) from the pot.`
       : `⏰ **${label} to go** on your bet \`${bet.shortcode}\`:\n${verbatim}\n\nBe ready to /resolve. Both sides need to confirm the same winner — or run /draw if you both agree it's a tie.`;
-  for (const uid of [bet.challengerId, bet.accepterId]) {
+  const recipients = bet.accepterId
+    ? [bet.challengerId, bet.accepterId]
+    : [bet.challengerId];
+  for (const uid of recipients) {
     try {
       const u = await client.users.fetch(uid);
       await u.send(body);
