@@ -66,6 +66,11 @@ export const bets = pgTable(
      *  parents in the chain (0 = original, 1 = first rematch, etc.). */
     parentBetId: bigint("parent_bet_id", { mode: "bigint" }),
     chainDepth: bigint("chain_depth", { mode: "number" }).notNull().default(0),
+    /** Mutual /cancel request. When non-null, the counterparty has 24h to
+     *  Agree or Deny (or the watchdog clears the request). On Agree, refund
+     *  fires. On Deny, the request is cleared. */
+    cancelRequestedAt: timestamp("cancel_requested_at", { withTimezone: true }),
+    cancelRequestedBy: text("cancel_requested_by"),
     /** Short user-facing bet id (e.g. "K7M2RX"). Unique per row. Lowercase
      *  base32-ish (no I, L, O, 0, 1 to avoid confusion). Populated on insert. */
     shortcode: text("shortcode").notNull().unique(),

@@ -11,12 +11,14 @@ import { formatAmount, formatBet, renderBetCard } from "./render.js";
 import {
   acceptBet,
   adminResolve,
+  agreeCancel,
   claimDraw,
   claimOpenBet,
   claimWinner,
   createRematch,
   createWalletLinkSession,
   declineBet,
+  denyCancel,
   findBetByIdOrShortcode,
   getBet,
   getUser,
@@ -26,8 +28,8 @@ import {
   listActiveBetsFor,
   proposeBet,
   reconcileBet,
-  refundBet,
   reliabilityLabel,
+  requestCancel,
   setAnnounceMessageId,
 } from "../flows.js";
 import { isAdmin } from "../env.js";
@@ -351,13 +353,79 @@ export async function handleCancel(i: ChatInputCommandInteraction) {
   const betId = await resolveBetIdFromInput(i, betIdStr);
   if (betId === null) return;
   try {
-    const sig = await refundBet(betId);
+    const bet = await requestCancel(betId, i.user.id);
+    if (!bet) {
+      await i.editReply("Bet not found after request.");
+      return;
+    }
+    const counterpartyId =
+      bet.challengerId === i.user.id ? bet.accepterId : bet.challengerId;
+    if (!counterpartyId) {
+      await i.editReply("Bet has no counterparty to ask for agreement.");
+      return;
+    }
+    const counterparty = `<@${counterpartyId}>`;
     await i.editReply(
-      `↩️ Refunded. tx: https://explorer.solana.com/tx/${sig}?cluster=devnet`,
+      `🛑 Cancel requested for \`${bet.shortcode}\`. ${counterparty} has 24h to agree or deny.`,
     );
+    // DM counterparty with Agree/Deny buttons.
+    try {
+      const u = await i.client.users.fetch(counterpartyId);
+      await u.send({
+        content: `<@${i.user.id}> requested to cancel bet \`${bet.shortcode}\`:\n> ${bet.description}\n\nAgree → both sides refunded. Deny → bet stays active.`,
+        components: [
+          new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`cancel-agree:${bet.id}`)
+              .setLabel("✅ Agree to cancel")
+              .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+              .setCustomId(`cancel-deny:${bet.id}`)
+              .setLabel("❌ Deny")
+              .setStyle(ButtonStyle.Danger),
+          ),
+        ],
+      });
+    } catch {}
     await updateAnnouncement(i.client, betId);
   } catch (e: any) {
     await i.editReply(`Error: ${e?.message ?? String(e)}`);
+  }
+}
+
+export async function handleCancelAgree(i: ButtonInteraction, betId: bigint) {
+  await i.deferUpdate();
+  try {
+    const { sig } = await agreeCancel(betId, i.user.id);
+    await i.editReply({ components: [] });
+    await i.followUp({
+      content: `↩️ Both sides refunded. tx: https://explorer.solana.com/tx/${sig}?cluster=devnet`,
+      ephemeral: false,
+    });
+    await updateAnnouncement(i.client, betId);
+  } catch (e: any) {
+    await i.followUp({
+      content: `Error: ${e?.message ?? String(e)}`,
+      ephemeral: true,
+    });
+  }
+}
+
+export async function handleCancelDeny(i: ButtonInteraction, betId: bigint) {
+  await i.deferUpdate();
+  try {
+    await denyCancel(betId, i.user.id);
+    await i.editReply({ components: [] });
+    await i.followUp({
+      content: `❌ Cancel denied — bet stays active.`,
+      ephemeral: false,
+    });
+    await updateAnnouncement(i.client, betId);
+  } catch (e: any) {
+    await i.followUp({
+      content: `Error: ${e?.message ?? String(e)}`,
+      ephemeral: true,
+    });
   }
 }
 
@@ -747,10 +815,31 @@ async function sendResolutionDms(
   const recipients = bet.accepterId
     ? [bet.challengerId, bet.accepterId]
     : [bet.challengerId];
+  // Loser gets the 🎲 Double or Nothing button. Winner gets a plain DM.
+  const loserId =
+    bet.winnerId && bet.accepterId
+      ? bet.winnerId === bet.challengerId
+        ? bet.accepterId
+        : bet.challengerId
+      : null;
   for (const uid of recipients) {
     try {
       const u = await i.client.users.fetch(uid);
-      await u.send(dmContent);
+      if (uid === loserId) {
+        await u.send({
+          content: dmContent,
+          components: [
+            new ActionRowBuilder<ButtonBuilder>().addComponents(
+              new ButtonBuilder()
+                .setCustomId(`don:${bet.id}`)
+                .setLabel("🎲 Double or Nothing")
+                .setStyle(ButtonStyle.Primary),
+            ),
+          ],
+        });
+      } else {
+        await u.send(dmContent);
+      }
     } catch {}
   }
 }
@@ -817,14 +906,27 @@ export async function handleDecline(i: ButtonInteraction, betId: bigint) {
   await i.deferUpdate();
   const bet = await getBet(betId);
   if (!bet) return;
-  // Open bets: only the challenger can cancel their own offer (until claimed).
+  // Decline is only valid while the bet is still in 'proposed' state.
+  // Open bets that have been claimed (accepterId set) AND any bet past
+  // proposed are off-limits via this button.
+  if (bet.status !== "proposed") {
+    return i.followUp({
+      content: `Bet is already ${bet.status} — too late to decline.`,
+      ephemeral: true,
+    });
+  }
+  // Open bets (still unclaimed): only the challenger can cancel.
+  // Open bets that got claimed in a race: accepterId is now set, isOpen
+  // remains true, but status is still proposed → fall through to the
+  // 'targeted' rule (accepter declines).
   // Targeted bets: only the challenged user can decline.
-  const allowed = bet.isOpen
+  const isUnclaimedOpen = bet.isOpen && bet.accepterId === null;
+  const allowed = isUnclaimedOpen
     ? bet.challengerId === i.user.id
     : bet.accepterId === i.user.id;
   if (!allowed) {
     return i.followUp({
-      content: bet.isOpen
+      content: isUnclaimedOpen
         ? "Only the challenger can cancel an open bet."
         : "Only the challenged user can decline.",
       ephemeral: true,

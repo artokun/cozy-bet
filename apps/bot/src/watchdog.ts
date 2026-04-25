@@ -46,9 +46,54 @@ export function startWatchdog(client: Client): NodeJS.Timeout | null {
     } catch (e) {
       console.error("[watchdog] nudge tick error:", e);
     }
+    try {
+      await tickCancelExpiry(client);
+    } catch (e) {
+      console.error("[watchdog] cancel-expiry tick error:", e);
+    }
   };
 
   return setInterval(tick, intervalMs);
+}
+
+/**
+ * Auto-expire mutual-cancel requests after 24h with no Agree/Deny. Clears
+ * cancel_requested_at + cancel_requested_by; the bet stays active.
+ */
+async function tickCancelExpiry(client: Client) {
+  const d = getDb(env.DATABASE_URL);
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const stale = await d
+    .select()
+    .from(bets)
+    .where(
+      and(
+        // Use SQL: not null + < cutoff
+        // drizzle: cancelRequestedAt IS NOT NULL AND cancelRequestedAt < cutoff
+        sql`${bets.cancelRequestedAt} IS NOT NULL`,
+        lt(bets.cancelRequestedAt, cutoff),
+      ),
+    );
+  for (const b of stale) {
+    try {
+      await d
+        .update(bets)
+        .set({ cancelRequestedAt: null, cancelRequestedBy: null })
+        .where(eq(bets.id, b.id));
+      console.log(`[watchdog] expired cancel request on bet ${b.shortcode}`);
+      // DM the requester so they know it timed out.
+      if (b.cancelRequestedBy) {
+        try {
+          const u = await client.users.fetch(b.cancelRequestedBy);
+          await u.send(
+            `Your cancel request on bet \`${b.shortcode}\` expired (24h with no response). Bet stays active. Try /cancel again or /resolve when the time comes.`,
+          );
+        } catch {}
+      }
+    } catch (e) {
+      console.error(`[watchdog] failed to expire cancel for ${b.id}:`, e);
+    }
+  }
 }
 
 async function tickPendingRefund(client: Client, refundMin: number) {

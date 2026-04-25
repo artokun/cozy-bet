@@ -654,6 +654,98 @@ export async function adminResolve(
   return await finalizeResolve(betId, winnerDiscordId);
 }
 
+/**
+ * Either participant requests cancel. The counterparty has 24h to Agree
+ * or Deny. Returns the bet with cancel_requested_* set.
+ */
+export async function requestCancel(betId: bigint, requesterId: string) {
+  const d = db();
+  const bet = await getBet(betId);
+  if (!bet) throw new Error("bet not found");
+  if (
+    bet.status !== BetStatus.Pending &&
+    bet.status !== BetStatus.Funded &&
+    bet.status !== BetStatus.Disputed
+  ) {
+    throw new Error(`bet is ${bet.status}, cannot request cancel`);
+  }
+  if (
+    requesterId !== bet.challengerId &&
+    requesterId !== bet.accepterId
+  ) {
+    throw new Error("not a participant");
+  }
+  if (bet.cancelRequestedAt) {
+    throw new Error("a cancel request is already open");
+  }
+  await d
+    .update(bets)
+    .set({ cancelRequestedAt: new Date(), cancelRequestedBy: requesterId })
+    .where(eq(bets.id, betId));
+  await d.insert(betEvents).values({
+    betId,
+    actorDiscordId: requesterId,
+    eventType: "cancel_request",
+  });
+  return await getBet(betId);
+}
+
+/**
+ * Counterparty accepts the cancel request → refund fires.
+ */
+export async function agreeCancel(betId: bigint, agreerId: string) {
+  const bet = await getBet(betId);
+  if (!bet) throw new Error("bet not found");
+  if (!bet.cancelRequestedAt || !bet.cancelRequestedBy) {
+    throw new Error("no cancel request open");
+  }
+  if (agreerId === bet.cancelRequestedBy) {
+    throw new Error("requester cannot self-agree");
+  }
+  if (
+    agreerId !== bet.challengerId &&
+    agreerId !== bet.accepterId
+  ) {
+    throw new Error("not a participant");
+  }
+  // Clear the request markers BEFORE the refund so a partial-failure
+  // recovery doesn't leave both states set.
+  const d = db();
+  await d
+    .update(bets)
+    .set({ cancelRequestedAt: null, cancelRequestedBy: null })
+    .where(eq(bets.id, betId));
+  await d.insert(betEvents).values({
+    betId,
+    actorDiscordId: agreerId,
+    eventType: "cancel_agree",
+  });
+  const sig = await refundBet(betId);
+  return { sig };
+}
+
+/** Counterparty rejects the cancel request → clear markers, no refund. */
+export async function denyCancel(betId: bigint, denierId: string) {
+  const bet = await getBet(betId);
+  if (!bet) throw new Error("bet not found");
+  if (!bet.cancelRequestedAt || !bet.cancelRequestedBy) {
+    throw new Error("no cancel request open");
+  }
+  if (denierId === bet.cancelRequestedBy) {
+    throw new Error("requester cannot self-deny");
+  }
+  const d = db();
+  await d
+    .update(bets)
+    .set({ cancelRequestedAt: null, cancelRequestedBy: null })
+    .where(eq(bets.id, betId));
+  await d.insert(betEvents).values({
+    betId,
+    actorDiscordId: denierId,
+    eventType: "cancel_deny",
+  });
+}
+
 /** Refund both sides on-chain, set status. */
 export async function refundBet(betId: bigint) {
   const d = db();
