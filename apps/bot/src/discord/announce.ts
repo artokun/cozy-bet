@@ -4,10 +4,11 @@ import {
   ButtonStyle,
   EmbedBuilder,
   type Client,
+  type MessageCreateOptions,
   type MessageEditOptions,
 } from "discord.js";
 import { getBet } from "../flows.js";
-import { getDb, users } from "@cozy-bet/db";
+import { getDb, users, betEvents } from "@cozy-bet/db";
 import { eq } from "drizzle-orm";
 import { env } from "../env.js";
 import { formatAmount } from "./render.js";
@@ -122,4 +123,71 @@ export async function updateAnnouncement(client: Client, betId: bigint) {
   }
   void challengerRow;
   void accepterRow;
+}
+
+/**
+ * Try to send a message in a channel. If the bot can't reach it (perms, rate
+ * limit, channel deleted, etc.), DM each participant the same content as a
+ * fallback. Logs a 'channel_fallback' event to the bet's audit log on
+ * fallback so we can detect chronic problems later.
+ *
+ * Returns true if the channel send succeeded; false if it fell back to DMs;
+ * throws only if BOTH paths fail (extremely rare).
+ */
+export async function safeChannelSend(
+  client: Client,
+  args: {
+    channelId: string;
+    payload: MessageCreateOptions;
+    /** Discord user ids to DM if the channel send fails. */
+    fallbackRecipients: string[];
+    /** Optional bet id — if provided, channel-fallback events are logged. */
+    betId?: bigint;
+  },
+): Promise<boolean> {
+  try {
+    const ch = await client.channels.fetch(args.channelId);
+    if (ch && ch.isTextBased() && "send" in ch) {
+      await ch.send(args.payload);
+      return true;
+    }
+  } catch (e) {
+    console.warn(
+      `[safeChannelSend] channel ${args.channelId} send failed:`,
+      String(e),
+    );
+  }
+  // Fallback: DM each recipient
+  let anyDmSucceeded = false;
+  for (const uid of args.fallbackRecipients) {
+    try {
+      const u = await client.users.fetch(uid);
+      await u.send(args.payload);
+      anyDmSucceeded = true;
+    } catch (e) {
+      console.warn(`[safeChannelSend] DM to ${uid} failed:`, String(e));
+    }
+  }
+  if (args.betId !== undefined) {
+    try {
+      const d = getDb(env.DATABASE_URL);
+      await d.insert(betEvents).values({
+        betId: args.betId,
+        eventType: "channel_fallback",
+        payload: {
+          channelId: args.channelId,
+          fallbackRecipients: args.fallbackRecipients,
+          dmSucceeded: anyDmSucceeded,
+        },
+      });
+    } catch {
+      // best-effort logging
+    }
+  }
+  if (!anyDmSucceeded) {
+    throw new Error(
+      `safeChannelSend failed: channel + all DM fallbacks rejected`,
+    );
+  }
+  return false;
 }

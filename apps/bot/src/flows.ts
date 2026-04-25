@@ -1,6 +1,6 @@
 import { getDb, users, bets, betEvents, walletLinkSessions, allowlist } from "@cozy-bet/db";
 import { BetStatus, makeShortcode, isShortcode } from "@cozy-bet/shared";
-import { eq, and, or } from "drizzle-orm";
+import { eq, and, or, sql } from "drizzle-orm";
 import { PublicKey } from "@solana/web3.js";
 import { nanoid } from "nanoid";
 import { env } from "./env.js";
@@ -473,4 +473,91 @@ export async function listActiveBetsFor(discordId: string) {
       ),
     )
     .limit(25);
+}
+
+/**
+ * Aggregate per-user stats for /leaderboard. Counts each completed bet as
+ * one row in the participant set; sums amounts in atomic units (USDC has 6
+ * decimals so callers divide by 1e6 to display).
+ *
+ * @param guildId optional — restrict to bets in this guild
+ * @param limit   default 10
+ */
+export type LeaderboardRow = {
+  discordId: string;
+  bets: number;
+  wins: number;
+  totalWagered: bigint;
+  totalWon: bigint;
+};
+
+export async function leaderboardData(args: {
+  guildId?: string;
+  limit?: number;
+}): Promise<LeaderboardRow[]> {
+  const d = db();
+  // Count + sum across both sides of every completed bet (resolved/drawn/refunded).
+  // Drizzle SQL: union both sides, group by discord_id.
+  const completedStatuses = [
+    BetStatus.Resolved,
+    BetStatus.Drawn,
+    BetStatus.Refunded,
+  ];
+  const guildFilter = args.guildId
+    ? sql`AND b.guild_id = ${args.guildId}`
+    : sql``;
+  const rows: LeaderboardRow[] = [];
+  const result = await d.execute<{
+    discord_id: string;
+    bets: number;
+    wins: number;
+    total_wagered: string;
+    total_won: string;
+  }>(sql`
+    WITH participants AS (
+      SELECT
+        b.challenger_id AS discord_id,
+        b.id AS bet_id,
+        b.amount,
+        CASE WHEN b.winner_id = b.challenger_id THEN 1 ELSE 0 END AS won,
+        b.amount AS payout
+      FROM bets b
+      WHERE b.status = ANY(${completedStatuses}::bet_status[]) ${guildFilter}
+      UNION ALL
+      SELECT
+        b.accepter_id AS discord_id,
+        b.id AS bet_id,
+        b.amount,
+        CASE WHEN b.winner_id = b.accepter_id THEN 1 ELSE 0 END AS won,
+        b.amount AS payout
+      FROM bets b
+      WHERE b.status = ANY(${completedStatuses}::bet_status[]) ${guildFilter}
+    )
+    SELECT
+      discord_id,
+      COUNT(*)::int AS bets,
+      SUM(won)::int AS wins,
+      SUM(amount)::text AS total_wagered,
+      SUM(CASE WHEN won = 1 THEN amount * 2 ELSE 0 END)::text AS total_won
+    FROM participants
+    GROUP BY discord_id
+    ORDER BY total_won::numeric DESC
+    LIMIT ${args.limit ?? 10}
+  `);
+  for (const r of result as unknown as Array<{
+    discord_id: string;
+    bets: number;
+    wins: number;
+    total_wagered: string;
+    total_won: string;
+  }>) {
+    rows.push({
+      discordId: r.discord_id,
+      bets: r.bets,
+      wins: r.wins,
+      totalWagered: BigInt(r.total_wagered ?? "0"),
+      totalWon: BigInt(r.total_won ?? "0"),
+    });
+  }
+  return rows;
 }

@@ -9,11 +9,13 @@ import {
   handleCancel,
   handleDecline,
   handleHelp,
+  handleLeaderboard,
   handleLinkWallet,
   handleMyBets,
   handleReconcile,
   handleResolve,
   handleSaybet,
+  handleStatus,
 } from "./commands.js";
 
 export async function routeSlash(i: ChatInputCommandInteraction) {
@@ -32,6 +34,10 @@ export async function routeSlash(i: ChatInputCommandInteraction) {
       return handleBalance(i);
     case "help":
       return handleHelp(i);
+    case "status":
+      return handleStatus(i);
+    case "leaderboard":
+      return handleLeaderboard(i);
     case "adminresolve":
       return handleAdminResolve(i);
     case "reconcile":

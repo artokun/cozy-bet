@@ -16,6 +16,7 @@ import {
   getUser,
   initializeOnChain,
   isAllowed,
+  leaderboardData,
   listActiveBetsFor,
   proposeBet,
   reconcileBet,
@@ -110,6 +111,30 @@ export const balanceCmd = new SlashCommandBuilder()
   .setName("balance")
   .setDescription("Show your mUSDC balance");
 
+export const statusCmd = new SlashCommandBuilder()
+  .setName("status")
+  .setDescription("Show full detail on a bet")
+  .addStringOption((o) =>
+    o
+      .setName("bet_id")
+      .setDescription("bet id or shortcode")
+      .setRequired(true),
+  );
+
+export const leaderboardCmd = new SlashCommandBuilder()
+  .setName("leaderboard")
+  .setDescription("Top wagerers in this server")
+  .addStringOption((o) =>
+    o
+      .setName("by")
+      .setDescription("ranking criterion")
+      .addChoices(
+        { name: "won (USDC)", value: "won" },
+        { name: "wagered (USDC)", value: "wagered" },
+        { name: "win rate (min 5 bets)", value: "winrate" },
+      ),
+  );
+
 export const commandDefinitions: RESTPostAPIApplicationCommandsJSONBody[] = [
   saybet.toJSON(),
   mybets.toJSON(),
@@ -118,6 +143,8 @@ export const commandDefinitions: RESTPostAPIApplicationCommandsJSONBody[] = [
   linkwallet.toJSON(),
   balanceCmd.toJSON(),
   helpCmd.toJSON(),
+  statusCmd.toJSON(),
+  leaderboardCmd.toJSON(),
   adminresolve.toJSON(),
   reconcile.toJSON(),
 ];
@@ -289,6 +316,92 @@ export async function handleReconcile(i: ChatInputCommandInteraction) {
   } catch (e: any) {
     await i.editReply(`Error: ${e?.message ?? String(e)}`);
   }
+}
+
+export async function handleStatus(i: ChatInputCommandInteraction) {
+  const raw = i.options.getString("bet_id", true);
+  const bet = await findBetByIdOrShortcode(raw);
+  if (!bet) {
+    await i.reply({ content: `Bet \`${raw}\` not found.`, ephemeral: true });
+    return;
+  }
+  const tokenAmount = formatAmount(BigInt(bet.amount));
+  const lines: string[] = [
+    `**Bet #${bet.shortcode}** — _${bet.status}_`,
+    `> ${bet.description}`,
+    `<@${bet.challengerId}> vs <@${bet.accepterId}> · ${tokenAmount} mUSDC each · pot ${(Number(BigInt(bet.amount)) / 1e6 * 2).toFixed(2)} mUSDC`,
+  ];
+  if (bet.deadline) {
+    const deadlineUnix = Math.floor(new Date(bet.deadline).getTime() / 1000);
+    lines.push(`Settles: <t:${deadlineUnix}:R> (<t:${deadlineUnix}:F>)`);
+  }
+  if (bet.status === "pending" || bet.status === "accepted") {
+    lines.push(
+      `Deposits: challenger ${bet.challengerDeposited ? "✅" : "⏳"} · accepter ${bet.accepterDeposited ? "✅" : "⏳"}`,
+    );
+  }
+  if (bet.winnerId) {
+    lines.push(`Winner: <@${bet.winnerId}>`);
+  }
+  if (bet.resolutionTxSig) {
+    lines.push(
+      `Tx: [explorer](https://explorer.solana.com/tx/${bet.resolutionTxSig}?cluster=devnet)`,
+    );
+  }
+  if (bet.challengerClaimsWinner || bet.accepterClaimsWinner) {
+    lines.push(
+      `Claims — challenger: ${bet.challengerClaimsWinner ? `<@${bet.challengerClaimsWinner}>` : "—"} · accepter: ${bet.accepterClaimsWinner ? `<@${bet.accepterClaimsWinner}>` : "—"}`,
+    );
+  }
+  await i.reply({ content: lines.join("\n") });
+}
+
+export async function handleLeaderboard(i: ChatInputCommandInteraction) {
+  const by = i.options.getString("by") ?? "won";
+  const rows = await leaderboardData({
+    guildId: i.guildId ?? undefined,
+    limit: 10,
+  });
+  if (rows.length === 0) {
+    await i.reply({
+      content: "No completed bets yet — be the first.",
+      ephemeral: true,
+    });
+    return;
+  }
+  // Re-rank in JS by the chosen criterion (DB returned them ranked by total_won)
+  type Row = (typeof rows)[number];
+  const sortedRows: Row[] = [...rows];
+  if (by === "wagered") {
+    sortedRows.sort((a, b) =>
+      a.totalWagered > b.totalWagered ? -1 : a.totalWagered < b.totalWagered ? 1 : 0,
+    );
+  } else if (by === "winrate") {
+    const withMin = sortedRows.filter((r) => r.bets >= 5);
+    withMin.sort((a, b) => b.wins / b.bets - a.wins / a.bets);
+    sortedRows.length = 0;
+    sortedRows.push(...withMin);
+  }
+  const lines = sortedRows.slice(0, 10).map((r, idx) => {
+    const won = (Number(r.totalWon) / 1e6).toFixed(2);
+    const wagered = (Number(r.totalWagered) / 1e6).toFixed(2);
+    const winRate = r.bets > 0 ? Math.round((r.wins / r.bets) * 100) : 0;
+    return `**${idx + 1}.** <@${r.discordId}> — won ${won} mUSDC · wagered ${wagered} · ${winRate}% win rate (${r.bets} bets)`;
+  });
+  if (lines.length === 0) {
+    await i.reply({
+      content: "No-one qualifies (need 5+ bets for win rate).",
+      ephemeral: true,
+    });
+    return;
+  }
+  const heading =
+    by === "won"
+      ? "🏆 Top winnings"
+      : by === "wagered"
+        ? "💵 Top wagered"
+        : "📊 Top win rate";
+  await i.reply({ content: `${heading}\n${lines.join("\n")}` });
 }
 
 export async function handleHelp(i: ChatInputCommandInteraction) {
