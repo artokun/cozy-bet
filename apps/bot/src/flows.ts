@@ -677,6 +677,12 @@ export async function proposeCounter(args: {
       `bet is ${bet.status} — counter only works before either side accepts`,
     );
   }
+  // Open bets without a claimer can't be countered (no counterparty to agree).
+  if (bet.accepterId === null) {
+    throw new Error(
+      "open bet has no counterparty yet — wait for someone to claim, then /counter",
+    );
+  }
   if (
     args.requesterId !== bet.challengerId &&
     args.requesterId !== bet.accepterId
@@ -732,7 +738,9 @@ export async function agreeCounter(betId: bigint, agreerId: string) {
   if (bet.status !== BetStatus.Proposed) {
     throw new Error(`bet is ${bet.status} — counter no longer applicable`);
   }
-  // Apply the counter. If description changed, optionally re-disambig.
+  // Apply the counter. If description changed, re-disambig FIRST so we
+  // don't end up with description != canonical (which would let the
+  // on-chain terms_hash diverge from what users see).
   const patch: Partial<typeof bets.$inferInsert> = {
     counterAmount: null,
     counterDescription: null,
@@ -741,19 +749,54 @@ export async function agreeCounter(betId: bigint, agreerId: string) {
   };
   if (bet.counterAmount !== null) patch.amount = bet.counterAmount;
   if (bet.counterDescription !== null) {
-    patch.description = bet.counterDescription;
-    // Re-run disambig on the new description if LLM is configured.
     const r = await disambig({
       userPhrase: bet.counterDescription,
       challengerTag: bet.challengerId,
       accepterTag: bet.accepterId ?? "any taker",
       todayIso: new Date().toISOString().slice(0, 10),
     });
-    if (r.kind !== "unresolvable") {
-      patch.termsCanonical = r.canonical;
+    if (r.kind === "unresolvable") {
+      // Disambig failed → abort the counter agreement entirely. Clear the
+      // counter markers (we don't want a stuck pending) but keep original
+      // terms intact.
+      await d
+        .update(bets)
+        .set({
+          counterAmount: null,
+          counterDescription: null,
+          counterBy: null,
+          counterAt: null,
+        })
+        .where(eq(bets.id, betId));
+      throw new Error(
+        `counter description is too ambiguous to lock in: ${r.reason}. Counter cleared; the original terms stand.`,
+      );
     }
+    patch.description = bet.counterDescription;
+    patch.termsCanonical = r.canonical;
   }
-  await d.update(bets).set(patch).where(eq(bets.id, betId));
+  // TOCTOU guard: only apply if status is STILL proposed AND the counter we
+  // just looked up is still the open one. This prevents a race with the
+  // Accept button: if the accepter clicked Accept while we awaited disambig,
+  // status will have changed and the conditional UPDATE will affect zero
+  // rows. We treat that as "the bet was accepted before our agree completed
+  // — counter is moot" and surface a clear error.
+  const updated = await d
+    .update(bets)
+    .set(patch)
+    .where(
+      and(
+        eq(bets.id, betId),
+        eq(bets.status, BetStatus.Proposed),
+        eq(bets.counterBy, bet.counterBy),
+      ),
+    )
+    .returning();
+  if (updated.length === 0) {
+    throw new Error(
+      "bet state changed while applying counter — likely accepted in parallel. The counter is no longer applicable.",
+    );
+  }
   await d.insert(betEvents).values({
     betId,
     actorDiscordId: agreerId,
@@ -771,6 +814,12 @@ export async function denyCounter(betId: bigint, denierId: string) {
   }
   if (denierId === bet.counterBy) {
     throw new Error("requester cannot self-deny");
+  }
+  // Mirror agreeCounter's participant gate: only the OTHER participant can
+  // deny. This matters when the deny button got posted in the bet's
+  // channel (DM-fallback path) where any reader could click it.
+  if (denierId !== bet.challengerId && denierId !== bet.accepterId) {
+    throw new Error("not a participant");
   }
   await d
     .update(bets)
