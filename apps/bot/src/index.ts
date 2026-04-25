@@ -3,6 +3,7 @@ import { env, allowedGuilds } from "./env.js";
 import { routeButton, routeSlash } from "./discord/interactions.js";
 import { startApi } from "./api.js";
 import { startWatchdog } from "./watchdog.js";
+import { serializeForUser } from "./util/userMutex.js";
 
 const client = new Client({
   intents: [
@@ -28,17 +29,25 @@ client.on(Events.InteractionCreate, async (i) => {
     }
     return;
   }
-  try {
-    if (i.isChatInputCommand()) await routeSlash(i);
-    else if (i.isButton()) await routeButton(i);
-  } catch (e: any) {
-    console.error("[interaction] error", e);
+  // Serialize per-user so a single user can't race their own state-mutating
+  // commands or button clicks. Read-only commands (e.g. /help) still queue
+  // but cost basically nothing.
+  await serializeForUser(i.user.id, async () => {
     try {
-      if (i.isRepliable() && !i.replied && !i.deferred) {
-        await i.reply({ content: `Error: ${e?.message ?? e}`, ephemeral: true });
-      }
-    } catch {}
-  }
+      if (i.isChatInputCommand()) await routeSlash(i);
+      else if (i.isButton()) await routeButton(i);
+    } catch (e: any) {
+      console.error("[interaction] error", e);
+      try {
+        if (i.isRepliable() && !i.replied && !i.deferred) {
+          await i.reply({
+            content: `Error: ${e?.message ?? e}`,
+            ephemeral: true,
+          });
+        }
+      } catch {}
+    }
+  });
 });
 
 await client.login(env.DISCORD_BOT_TOKEN);
