@@ -145,7 +145,7 @@ export async function handleSaybet(i: ChatInputCommandInteraction) {
     return;
   }
 
-  const betId = await proposeBet({
+  const { betId, shortcode } = await proposeBet({
     guildId: i.guildId,
     channelId: i.channelId,
     challengerId: i.user.id,
@@ -162,9 +162,10 @@ export async function handleSaybet(i: ChatInputCommandInteraction) {
     amount,
     description,
     status: "proposed",
+    shortcode,
   });
   await i.reply({
-    content: `${target}, you've been challenged.`,
+    content: `${target}, you've been challenged. Bet code: \`${shortcode}\``,
     embeds: [card.embed],
     components: [card.proposeRow(betId)],
   });

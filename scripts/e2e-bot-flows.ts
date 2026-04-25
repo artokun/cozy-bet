@@ -109,7 +109,7 @@ async function main() {
   await setUserWallet(DISCORD_B, userB.publicKey.toBase58());
 
   // 1. Propose
-  const betId = await proposeBet({
+  const { betId } = await proposeBet({
     guildId: "999",
     channelId: "888",
     challengerId: DISCORD_A,

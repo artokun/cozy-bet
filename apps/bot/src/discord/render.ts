@@ -16,9 +16,10 @@ export function renderBetCard(args: {
   amount: number;
   description: string;
   status: string;
+  shortcode?: string;
 }) {
   const embed = new EmbedBuilder()
-    .setTitle(`Bet #${args.betId}`)
+    .setTitle(args.shortcode ? `Bet #${args.shortcode}` : `Bet #${args.betId}`)
     .setDescription(args.description)
     .addFields(
       { name: "Challenger", value: args.challenger, inline: true },
@@ -49,6 +50,8 @@ export function formatBet(b: {
   description: string;
   amount: bigint;
   status: string;
+  shortcode?: string;
 }): string {
-  return `• #${b.id} — ${formatAmount(b.amount)} mUSDC — ${b.description} — _${b.status}_`;
+  const idLabel = b.shortcode ?? `#${b.id}`;
+  return `• ${idLabel} — ${formatAmount(b.amount)} mUSDC — ${b.description} — _${b.status}_`;
 }

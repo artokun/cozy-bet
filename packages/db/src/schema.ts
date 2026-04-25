@@ -19,6 +19,7 @@ export const betStatusEnum = pgEnum("bet_status", [
   "pending",
   "funded",
   "resolved",
+  "drawn",
   "refunded",
   "canceled",
   "disputed",
@@ -49,7 +50,15 @@ export const bets = pgTable(
     amount: bigint("amount", { mode: "bigint" }).notNull(),
     tokenMint: text("token_mint").notNull(),
     description: text("description").notNull(),
+    /** Short user-facing bet id (e.g. "K7M2RX"). Unique per row. Lowercase
+     *  base32-ish (no I, L, O, 0, 1 to avoid confusion). Populated on insert. */
+    shortcode: text("shortcode").notNull().unique(),
     status: betStatusEnum("status").notNull().default("proposed"),
+    /** When the bet auto-expires if unresolved. Set on /saybet. Used by the
+     *  watchdog to send 24h/2h nudges and trigger arbiter handoff after. */
+    deadline: timestamp("deadline", { withTimezone: true }),
+    nudge24hSentAt: timestamp("nudge_24h_sent_at", { withTimezone: true }),
+    nudge2hSentAt: timestamp("nudge_2h_sent_at", { withTimezone: true }),
     // On-chain state (null until initialize_bet runs)
     betPda: text("bet_pda"),
     vaultPda: text("vault_pda"),
@@ -70,6 +79,9 @@ export const bets = pgTable(
     byChallenger: index("bets_by_challenger_idx").on(table.challengerId),
     byAccepter: index("bets_by_accepter_idx").on(table.accepterId),
     byStatus: index("bets_by_status_idx").on(table.status),
+    byShortcode: uniqueIndex("bets_by_shortcode_idx").on(table.shortcode),
+    /** Watchdog scans for {pending|funded} bets with deadlines coming due. */
+    byDeadline: index("bets_by_deadline_idx").on(table.status, table.deadline),
   }),
 );
 

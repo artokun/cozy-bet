@@ -17,6 +17,7 @@ export const BetStatus = {
   Pending: "pending", // Program initialized, awaiting deposits
   Funded: "funded", // Both deposits landed
   Resolved: "resolved", // Winner paid
+  Drawn: "drawn", // Both sides agreed to draw, full refund taken
   Refunded: "refunded",
   // Off-chain-only terminal states
   Canceled: "canceled", // Declined before init, or both-party cancel before funding
@@ -65,4 +66,25 @@ export function makeBetId(): BN {
   const ts = BigInt(Date.now()) & ((1n << 52n) - 1n);
   const rnd = BigInt(Math.floor(Math.random() * 4096));
   return new BN(((ts << 12n) | rnd).toString());
+}
+
+/**
+ * 6-character user-facing bet id ("K7M2RX"). Crockford-base32 alphabet minus
+ * I/L/O/U so people can't confuse 0/O, 1/I/L, or read it as a slur. ~64 bits
+ * of entropy across 6 chars is enough that DB collision is astronomically
+ * unlikely; bot retries on uniqueness violation just in case.
+ */
+const SHORTCODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ"; // 30 chars
+export function makeShortcode(len = 6): string {
+  let s = "";
+  for (let i = 0; i < len; i++) {
+    s += SHORTCODE_ALPHABET[Math.floor(Math.random() * SHORTCODE_ALPHABET.length)];
+  }
+  return s;
+}
+
+/** True if a string looks like a shortcode (vs a full bigint bet_id). Used by
+ *  the bot to dispatch /resolve and friends to either lookup path. */
+export function isShortcode(s: string): boolean {
+  return /^[2-9A-HJ-NP-Z]{4,8}$/i.test(s);
 }

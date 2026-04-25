@@ -1,5 +1,5 @@
 import { getDb, users, bets, betEvents, walletLinkSessions, allowlist } from "@cozy-bet/db";
-import { BetStatus } from "@cozy-bet/shared";
+import { BetStatus, makeShortcode, isShortcode } from "@cozy-bet/shared";
 import { eq, and, or } from "drizzle-orm";
 import { PublicKey } from "@solana/web3.js";
 import { nanoid } from "nanoid";
@@ -53,29 +53,77 @@ export async function proposeBet(args: {
   amount: bigint;
   description: string;
   tokenMint: string;
+  /** Optional deadline timestamp; default = now + 7d. */
+  deadline?: Date;
 }) {
   await upsertUser(args.challengerId);
   await upsertUser(args.accepterId);
   const betId = BigInt(Date.now()) * 4096n + BigInt(Math.floor(Math.random() * 4096));
+  const deadline = args.deadline ?? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
   const d = db();
-  await d.insert(bets).values({
-    id: betId,
-    guildId: args.guildId,
-    channelId: args.channelId,
-    challengerId: args.challengerId,
-    accepterId: args.accepterId,
-    amount: args.amount,
-    tokenMint: args.tokenMint,
-    description: args.description,
-    status: BetStatus.Proposed,
-  });
+
+  // Insert with retry on shortcode collision (extremely unlikely with 6 chars from 30-char alphabet)
+  let shortcode = makeShortcode();
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      await d.insert(bets).values({
+        id: betId,
+        guildId: args.guildId,
+        channelId: args.channelId,
+        challengerId: args.challengerId,
+        accepterId: args.accepterId,
+        amount: args.amount,
+        tokenMint: args.tokenMint,
+        description: args.description,
+        shortcode,
+        status: BetStatus.Proposed,
+        deadline,
+      });
+      break;
+    } catch (e: any) {
+      // 23505 = unique violation in postgres
+      if (
+        e?.code === "23505" &&
+        String(e?.constraint_name ?? "").includes("shortcode")
+      ) {
+        shortcode = makeShortcode();
+        continue;
+      }
+      throw e;
+    }
+  }
   await d.insert(betEvents).values({
     betId,
     actorDiscordId: args.challengerId,
     eventType: "proposed",
-    payload: { amount: args.amount.toString(), description: args.description },
+    payload: {
+      amount: args.amount.toString(),
+      description: args.description,
+      shortcode,
+      deadline: deadline.toISOString(),
+    },
   });
-  return betId;
+  return { betId, shortcode };
+}
+
+/** Lookup helper. Accepts either a full numeric bet_id or a shortcode. */
+export async function findBetByIdOrShortcode(input: string) {
+  const d = db();
+  if (isShortcode(input)) {
+    const rows = await d
+      .select()
+      .from(bets)
+      .where(eq(bets.shortcode, input.toUpperCase()))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+  try {
+    const id = BigInt(input);
+    const rows = await d.select().from(bets).where(eq(bets.id, id)).limit(1);
+    return rows[0] ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export async function getBet(betId: bigint) {

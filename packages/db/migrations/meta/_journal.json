@@ -8,6 +8,13 @@
       "when": 1776998755428,
       "tag": "0000_moaning_morgan_stark",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1777076583464,
+      "tag": "0001_previous_vindicator",
+      "breakpoints": true
     }
   ]
 }
