@@ -313,9 +313,11 @@ export async function reconcileBet(betId: bigint) {
         ? BetStatus.Funded
         : "resolved" in onChain.status
           ? BetStatus.Resolved
-          : "refunded" in onChain.status
-            ? BetStatus.Refunded
-            : null;
+          : "drawn" in onChain.status
+            ? BetStatus.Drawn
+            : "refunded" in onChain.status
+              ? BetStatus.Refunded
+              : null;
   if (
     onChainStatus &&
     bet.status !== onChainStatus &&

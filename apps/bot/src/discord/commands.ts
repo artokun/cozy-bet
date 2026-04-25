@@ -197,6 +197,10 @@ export async function handleSaybet(i: ChatInputCommandInteraction) {
     return;
   }
 
+  // Defer BEFORE the LLM call — disambig + DB write can take >3s and the
+  // interaction token expires after 3s. Reply path below uses editReply.
+  await i.deferReply();
+
   const proposed = await proposeBet({
     guildId: i.guildId,
     channelId: i.channelId,
@@ -209,9 +213,8 @@ export async function handleSaybet(i: ChatInputCommandInteraction) {
     accepterTag: target.username,
   });
   if (!proposed.ok) {
-    await i.reply({
+    await i.editReply({
       content: `Couldn't auto-clarify those terms: \`${proposed.detail}\`. Try rewording the description so the winning condition is unambiguous (who, when, where, how it's verified).`,
-      ephemeral: true,
     });
     return;
   }
@@ -236,7 +239,7 @@ export async function handleSaybet(i: ChatInputCommandInteraction) {
     challengerReliability: challengerRel,
     accepterReliability: accepterRel,
   });
-  await i.reply({
+  await i.editReply({
     content: `${target}, you've been challenged. Bet code: \`${shortcode}\``,
     embeds: [card.embed],
     components: [card.proposeRow(betId)],

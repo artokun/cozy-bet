@@ -81,10 +81,11 @@ async function tickDeadlineNudges(client: Client) {
   const d = getDb(env.DATABASE_URL);
   const now = new Date();
 
-  // 24h nudge: deadline still in the future AND <= 24h away AND not yet sent.
-  // No lower bound — if the bot was down for a while, we still catch up
-  // (single late nudge is better than none). The 2h nudge below has its own
-  // upper bound so this won't accidentally also send the 2h copy.
+  // 24h nudge: deadline > 2h away (so we don't double-send with the 2h
+  // nudge in the same tick) AND <= 24h away AND not yet sent. Catches up
+  // missed ticks down to 2h before deadline; below that, the 2h copy fires
+  // instead.
+  const lower24 = new Date(now.getTime() + 2 * 60 * 60 * 1000);
   const upper24 = new Date(now.getTime() + 24 * 60 * 60 * 1000);
   const due24 = await d
     .select()
@@ -93,7 +94,7 @@ async function tickDeadlineNudges(client: Client) {
       and(
         eq(bets.status, BetStatus.Funded),
         isNull(bets.nudge24hSentAt),
-        gt(bets.deadline, now),
+        gt(bets.deadline, lower24),
         lt(bets.deadline, upper24),
       ),
     );
