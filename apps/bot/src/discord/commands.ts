@@ -368,9 +368,13 @@ export async function handleStatus(i: ChatInputCommandInteraction) {
 
 export async function handleLeaderboard(i: ChatInputCommandInteraction) {
   const by = i.options.getString("by") ?? "won";
+  // Fetch a generous slice (top 100 by winnings) so re-ranking in JS isn't
+  // truncated for the wagered / winrate views. At MVP scale this is fine;
+  // when the user count grows, push the ORDER BY into the SQL via a `by`
+  // arg in leaderboardData.
   const rows = await leaderboardData({
     guildId: i.guildId ?? undefined,
-    limit: 10,
+    limit: 100,
   });
   if (rows.length === 0) {
     await i.reply({
@@ -379,19 +383,17 @@ export async function handleLeaderboard(i: ChatInputCommandInteraction) {
     });
     return;
   }
-  // Re-rank in JS by the chosen criterion (DB returned them ranked by total_won)
   type Row = (typeof rows)[number];
-  const sortedRows: Row[] = [...rows];
+  let sortedRows: Row[] = [...rows];
   if (by === "wagered") {
     sortedRows.sort((a, b) =>
       a.totalWagered > b.totalWagered ? -1 : a.totalWagered < b.totalWagered ? 1 : 0,
     );
   } else if (by === "winrate") {
-    const withMin = sortedRows.filter((r) => r.bets >= 5);
-    withMin.sort((a, b) => b.wins / b.bets - a.wins / a.bets);
-    sortedRows.length = 0;
-    sortedRows.push(...withMin);
+    sortedRows = sortedRows.filter((r) => r.bets >= 5);
+    sortedRows.sort((a, b) => b.wins / b.bets - a.wins / a.bets);
   }
+  // Default 'won' is already sorted by the SQL ORDER BY.
   const lines = sortedRows.slice(0, 10).map((r, idx) => {
     const won = (Number(r.totalWon) / 1e6).toFixed(2);
     const wagered = (Number(r.totalWagered) / 1e6).toFixed(2);

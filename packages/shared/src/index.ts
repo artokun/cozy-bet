@@ -84,7 +84,11 @@ export function makeShortcode(len = 6): string {
 }
 
 /** True if a string looks like a shortcode (vs a full bigint bet_id). Used by
- *  the bot to dispatch /resolve and friends to either lookup path. */
+ *  the bot to dispatch /resolve and friends to either lookup path.
+ *
+ *  Accepts the canonical alphabet (`SHORTCODE_ALPHABET`) AND legacy
+ *  hex-derived backfill values (0-9, A-F) from migration 0001. New codes
+ *  use the canonical alphabet; old ones may still contain 0/1/etc. */
 export function isShortcode(s: string): boolean {
-  return /^[2-9A-HJ-NP-Z]{4,8}$/i.test(s);
+  return /^[0-9A-Z]{4,8}$/i.test(s) && !/^\d+$/.test(s); // not all-digits (those are bet ids)
 }
