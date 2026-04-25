@@ -11,6 +11,7 @@ import {
   claimWinner,
   createWalletLinkSession,
   declineBet,
+  findBetByIdOrShortcode,
   getBet,
   getUser,
   initializeOnChain,
@@ -186,17 +187,29 @@ export async function handleMyBets(i: ChatInputCommandInteraction) {
   });
 }
 
+/** Resolves a string from a bet_id slash option to a bigint betId. Accepts
+ *  either the full numeric id or a 6-char shortcode. Replies with an error
+ *  message and returns null if neither matches. */
+async function resolveBetIdFromInput(
+  i: ChatInputCommandInteraction,
+  raw: string,
+): Promise<bigint | null> {
+  const bet = await findBetByIdOrShortcode(raw);
+  if (!bet) {
+    await (i.replied || i.deferred
+      ? i.editReply(`Bet \`${raw}\` not found.`)
+      : i.reply({ content: `Bet \`${raw}\` not found.`, ephemeral: true }));
+    return null;
+  }
+  return bet.id;
+}
+
 export async function handleResolve(i: ChatInputCommandInteraction) {
   const betIdStr = i.options.getString("bet_id", true);
   const winner = i.options.getUser("winner", true);
-  let betId: bigint;
-  try {
-    betId = BigInt(betIdStr);
-  } catch {
-    await i.reply({ content: "Invalid bet_id.", ephemeral: true });
-    return;
-  }
   await i.deferReply();
+  const betId = await resolveBetIdFromInput(i, betIdStr);
+  if (betId === null) return;
   try {
     const outcome = await claimWinner(betId, i.user.id, winner.id);
     if (outcome.outcome === "resolved") {
@@ -220,14 +233,9 @@ export async function handleResolve(i: ChatInputCommandInteraction) {
 
 export async function handleCancel(i: ChatInputCommandInteraction) {
   const betIdStr = i.options.getString("bet_id", true);
-  let betId: bigint;
-  try {
-    betId = BigInt(betIdStr);
-  } catch {
-    await i.reply({ content: "Invalid bet_id.", ephemeral: true });
-    return;
-  }
   await i.deferReply();
+  const betId = await resolveBetIdFromInput(i, betIdStr);
+  if (betId === null) return;
   try {
     const sig = await refundBet(betId);
     await i.editReply(
@@ -246,14 +254,9 @@ export async function handleAdminResolve(i: ChatInputCommandInteraction) {
   }
   const betIdStr = i.options.getString("bet_id", true);
   const winner = i.options.getUser("winner", true);
-  let betId: bigint;
-  try {
-    betId = BigInt(betIdStr);
-  } catch {
-    await i.reply({ content: "Invalid bet_id.", ephemeral: true });
-    return;
-  }
   await i.deferReply();
+  const betId = await resolveBetIdFromInput(i, betIdStr);
+  if (betId === null) return;
   try {
     const outcome = await adminResolve(betId, i.user.id, winner.id);
     await i.editReply(
@@ -271,14 +274,9 @@ export async function handleReconcile(i: ChatInputCommandInteraction) {
     return;
   }
   const betIdStr = i.options.getString("bet_id", true);
-  let betId: bigint;
-  try {
-    betId = BigInt(betIdStr);
-  } catch {
-    await i.reply({ content: "Invalid bet_id.", ephemeral: true });
-    return;
-  }
   await i.deferReply({ ephemeral: true });
+  const betId = await resolveBetIdFromInput(i, betIdStr);
+  if (betId === null) return;
   try {
     const result = await reconcileBet(betId);
     if (result.changed) {
