@@ -1,5 +1,5 @@
 {
-  "name": "@cozy-bet/program-solana-reference",
+  "name": "@cozy-bet/program",
   "version": "0.0.1",
   "private": true,
   "type": "commonjs",

@@ -14,9 +14,131 @@ export type Escrow = {
   },
   "instructions": [
     {
+      "name": "arbiterResolve",
+      "docs": [
+        "Arbiter forces a resolution. Arbiter fee = max(arbiter_min_fee,",
+        "pot * arbiter_fee_bps_of_pot / 10000), paid to msg.sender (arbiter ATA).",
+        "Arbiter must equal config.arbiter."
+      ],
+      "discriminator": [
+        72,
+        74,
+        145,
+        98,
+        97,
+        32,
+        107,
+        5
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "bet",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "betId"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "betId"
+              }
+            ]
+          }
+        },
+        {
+          "name": "winnerAta",
+          "writable": true
+        },
+        {
+          "name": "treasuryAta0",
+          "writable": true
+        },
+        {
+          "name": "treasuryAta1",
+          "writable": true
+        },
+        {
+          "name": "treasuryAta2",
+          "writable": true
+        },
+        {
+          "name": "treasuryAta3",
+          "writable": true
+        },
+        {
+          "name": "arbiterAta",
+          "writable": true
+        },
+        {
+          "name": "arbiter",
+          "signer": true
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "betId",
+          "type": "u64"
+        },
+        {
+          "name": "winner",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
       "name": "deposit",
       "docs": [
-        "Challenger or accepter deposits their stake into the vault."
+        "Either participant deposits their stake. Caller must be challenger or accepter."
       ],
       "discriminator": [
         242,
@@ -93,9 +215,111 @@ export type Escrow = {
       ]
     },
     {
+      "name": "draw",
+      "docs": [
+        "Both sides agreed it's a draw. Refund full stakes. No fee."
+      ],
+      "discriminator": [
+        61,
+        40,
+        62,
+        184,
+        31,
+        176,
+        24,
+        130
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "bet",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "betId"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "betId"
+              }
+            ]
+          }
+        },
+        {
+          "name": "challengerAta",
+          "writable": true
+        },
+        {
+          "name": "accepterAta",
+          "writable": true
+        },
+        {
+          "name": "resolver",
+          "signer": true
+        },
+        {
+          "name": "tokenProgram",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "betId",
+          "type": "u64"
+        }
+      ]
+    },
+    {
       "name": "initializeBet",
       "docs": [
-        "Bot calls this when both Discord users accept. Creates Bet PDA + vault token account."
+        "Create a bet. Resolver signs. `terms_hash` is keccak256/sha256 of the",
+        "canonical (chat-disambig-agreed) bet terms; pass [0u8; 32] for legacy",
+        "flows that skip the terms-signing step."
       ],
       "discriminator": [
         195,
@@ -108,6 +332,24 @@ export type Escrow = {
         57
       ],
       "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
         {
           "name": "bet",
           "writable": true,
@@ -154,6 +396,10 @@ export type Escrow = {
           "name": "mint"
         },
         {
+          "name": "resolver",
+          "signer": true
+        },
+        {
           "name": "payer",
           "writable": true,
           "signer": true
@@ -187,13 +433,24 @@ export type Escrow = {
         {
           "name": "accepter",
           "type": "pubkey"
+        },
+        {
+          "name": "termsHash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
         }
       ]
     },
     {
       "name": "initializeConfig",
       "docs": [
-        "One-time setup: persists treasury pubkey, fee, and resolver authority."
+        "One-time setup. After this, treasury is split 4 ways, resolver signs",
+        "`resolve`/`draw`/`refund`/`set_fee_bps_for_side`, arbiter signs",
+        "`arbiter_resolve`. Admin (authority) can rotate any of these later."
       ],
       "discriminator": [
         208,
@@ -237,23 +494,44 @@ export type Escrow = {
       ],
       "args": [
         {
-          "name": "feeBps",
-          "type": "u16"
-        },
-        {
-          "name": "treasury",
-          "type": "pubkey"
+          "name": "treasuryOwners",
+          "type": {
+            "array": [
+              "pubkey",
+              4
+            ]
+          }
         },
         {
           "name": "resolver",
           "type": "pubkey"
+        },
+        {
+          "name": "arbiter",
+          "type": "pubkey"
+        },
+        {
+          "name": "defaultFeeBps",
+          "type": "u16"
+        },
+        {
+          "name": "minDiscountedFeeBps",
+          "type": "u16"
+        },
+        {
+          "name": "arbiterMinFee",
+          "type": "u64"
+        },
+        {
+          "name": "arbiterFeeBpsOfPot",
+          "type": "u16"
         }
       ]
     },
     {
       "name": "refund",
       "docs": [
-        "Refund both depositors (mutual cancel, dispute timeout, etc.)."
+        "Refund whatever was deposited (one or both sides). Used on mutual cancel."
       ],
       "discriminator": [
         2,
@@ -353,7 +631,9 @@ export type Escrow = {
     {
       "name": "resolve",
       "docs": [
-        "Resolver (bot) pays the winner 100% - fee_bps; treasury gets fee_bps."
+        "Resolver pays winner: pot − standard_fee. Standard fee = sum of",
+        "per-side fee bps applied to each side's stake; split evenly across the",
+        "4 treasury owner ATAs (remainder goes to slot 0)."
       ],
       "discriminator": [
         246,
@@ -431,7 +711,19 @@ export type Escrow = {
           "writable": true
         },
         {
-          "name": "treasuryAta",
+          "name": "treasuryAta0",
+          "writable": true
+        },
+        {
+          "name": "treasuryAta1",
+          "writable": true
+        },
+        {
+          "name": "treasuryAta2",
+          "writable": true
+        },
+        {
+          "name": "treasuryAta3",
           "writable": true
         },
         {
@@ -455,9 +747,85 @@ export type Escrow = {
       ]
     },
     {
+      "name": "setFeeBpsForSide",
+      "docs": [
+        "Reduce a participant's per-side fee bps. Resolver-only. Floor at",
+        "`min_discounted_fee_bps`. Cannot increase. Used to apply the social-share",
+        "discount (250 → 150 typically)."
+      ],
+      "discriminator": [
+        214,
+        123,
+        25,
+        171,
+        145,
+        75,
+        30,
+        154
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "bet",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "betId"
+              }
+            ]
+          }
+        },
+        {
+          "name": "resolver",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "betId",
+          "type": "u64"
+        },
+        {
+          "name": "side",
+          "type": "pubkey"
+        },
+        {
+          "name": "newBps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
       "name": "updateConfig",
       "docs": [
-        "Admin can rotate resolver or treasury, or update fee."
+        "Admin-only. Pass `None` to keep an existing field."
       ],
       "discriminator": [
         29,
@@ -496,21 +864,50 @@ export type Escrow = {
       ],
       "args": [
         {
-          "name": "feeBps",
+          "name": "treasuryOwners",
           "type": {
-            "option": "u16"
-          }
-        },
-        {
-          "name": "treasury",
-          "type": {
-            "option": "pubkey"
+            "option": {
+              "array": [
+                "pubkey",
+                4
+              ]
+            }
           }
         },
         {
           "name": "resolver",
           "type": {
             "option": "pubkey"
+          }
+        },
+        {
+          "name": "arbiter",
+          "type": {
+            "option": "pubkey"
+          }
+        },
+        {
+          "name": "defaultFeeBps",
+          "type": {
+            "option": "u16"
+          }
+        },
+        {
+          "name": "minDiscountedFeeBps",
+          "type": {
+            "option": "u16"
+          }
+        },
+        {
+          "name": "arbiterMinFee",
+          "type": {
+            "option": "u64"
+          }
+        },
+        {
+          "name": "arbiterFeeBpsOfPot",
+          "type": {
+            "option": "u16"
           }
         }
       ]
@@ -607,13 +1004,33 @@ export type Escrow = {
     },
     {
       "code": 6012,
+      "name": "unauthorizedArbiter",
+      "msg": "Signer is not the authorized arbiter"
+    },
+    {
+      "code": 6013,
       "name": "unauthorizedAdmin",
       "msg": "Signer is not the config admin"
     },
     {
-      "code": 6013,
+      "code": 6014,
       "name": "mathOverflow",
       "msg": "Math overflow"
+    },
+    {
+      "code": 6015,
+      "name": "zeroAddress",
+      "msg": "Pubkey cannot be the zero address"
+    },
+    {
+      "code": 6016,
+      "name": "potTooSmallForArbiter",
+      "msg": "Pot too small to cover arbiter + standard fees"
+    },
+    {
+      "code": 6017,
+      "name": "invalidFeeBps",
+      "msg": "Invalid fee bps"
     }
   ],
   "types": [
@@ -669,6 +1086,23 @@ export type Escrow = {
           {
             "name": "winner",
             "type": "pubkey"
+          },
+          {
+            "name": "challengerFeeBps",
+            "type": "u16"
+          },
+          {
+            "name": "accepterFeeBps",
+            "type": "u16"
+          },
+          {
+            "name": "termsHash",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
           }
         ]
       }
@@ -686,6 +1120,9 @@ export type Escrow = {
           },
           {
             "name": "resolved"
+          },
+          {
+            "name": "drawn"
           },
           {
             "name": "refunded"
@@ -707,15 +1144,36 @@ export type Escrow = {
             "type": "pubkey"
           },
           {
-            "name": "treasury",
-            "type": "pubkey"
+            "name": "treasuryOwners",
+            "type": {
+              "array": [
+                "pubkey",
+                4
+              ]
+            }
           },
           {
             "name": "resolver",
             "type": "pubkey"
           },
           {
-            "name": "feeBps",
+            "name": "arbiter",
+            "type": "pubkey"
+          },
+          {
+            "name": "defaultFeeBps",
+            "type": "u16"
+          },
+          {
+            "name": "minDiscountedFeeBps",
+            "type": "u16"
+          },
+          {
+            "name": "arbiterMinFee",
+            "type": "u64"
+          },
+          {
+            "name": "arbiterFeeBpsOfPot",
             "type": "u16"
           }
         ]

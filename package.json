@@ -2,7 +2,7 @@
   "name": "cozy-bet",
   "version": "0.0.1",
   "private": true,
-  "description": "Discord crypto-escrow betting bot (Base + Coinbase Smart Wallet)",
+  "description": "Discord crypto-escrow betting bot (Solana, multi-chain ingest via aggregator)",
   "packageManager": "pnpm@9.15.2",
   "scripts": {
     "dev:bot": "pnpm --filter @cozy-bet/bot dev",
@@ -11,10 +11,10 @@
     "db:down": "docker compose down",
     "db:migrate": "pnpm --filter @cozy-bet/db migrate",
     "db:studio": "pnpm --filter @cozy-bet/db studio",
-    "contracts:build": "pnpm --filter @cozy-bet/contracts build",
-    "contracts:test": "pnpm --filter @cozy-bet/contracts test",
-    "contracts:deploy:sepolia": "pnpm --filter @cozy-bet/contracts deploy:sepolia",
-    "contracts:fmt": "pnpm --filter @cozy-bet/contracts fmt"
+    "program:build": "pnpm --filter @cozy-bet/program build",
+    "program:test": "pnpm --filter @cozy-bet/program test",
+    "program:test:local": "pnpm --filter @cozy-bet/program test:local",
+    "program:deploy": "pnpm --filter @cozy-bet/program deploy"
   },
   "devDependencies": {
     "@coinbase/cdp-sdk": "^1.48.2",
