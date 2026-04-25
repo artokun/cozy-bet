@@ -610,6 +610,65 @@ describe("escrow v2", () => {
     }
   });
 
+  it("refund + draw reject ATAs not owned by participants", async () => {
+    // Funded bet
+    const betId = new BN(Date.now() + 90);
+    const { betPda, vaultPda } = await fundBet(betId, AMOUNT);
+
+    // Imposter ATA — same mint, different owner
+    const imposter = Keypair.generate();
+    const sig = await provider.connection.requestAirdrop(
+      imposter.publicKey,
+      LAMPORTS_PER_SOL,
+    );
+    await provider.connection.confirmTransaction(sig, "confirmed");
+    const imposterAta = (
+      await getOrCreateAssociatedTokenAccount(
+        provider.connection,
+        admin,
+        mint,
+        imposter.publicKey,
+      )
+    ).address;
+
+    // refund with imposter ATA in challenger slot — must reject
+    try {
+      await program.methods
+        .refund(betId)
+        .accountsPartial({
+          config: configPda,
+          bet: betPda,
+          vault: vaultPda,
+          challengerAta: imposterAta,
+          accepterAta,
+          resolver: resolver.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .rpc();
+      assert.fail("refund should have rejected non-challenger ATA");
+    } catch (e: any) {
+      assert.include(e.toString(), "AtaMismatch");
+    }
+    // draw with imposter ATA in accepter slot — must reject
+    try {
+      await program.methods
+        .draw(betId)
+        .accountsPartial({
+          config: configPda,
+          bet: betPda,
+          vault: vaultPda,
+          challengerAta,
+          accepterAta: imposterAta,
+          resolver: resolver.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .rpc();
+      assert.fail("draw should have rejected non-accepter ATA");
+    } catch (e: any) {
+      assert.include(e.toString(), "AtaMismatch");
+    }
+  });
+
   it("refund returns deposits — both-sided + after one-sided", async () => {
     // both-sided refund
     const betId = new BN(Date.now() + 8);

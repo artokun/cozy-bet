@@ -13,8 +13,13 @@ const schema = z.object({
   SOLANA_RPC_URL: z.string().url().default("https://api.devnet.solana.com"),
   PROGRAM_ID: z.string().min(32),
   MOCK_USDC_MINT: z.string().min(32),
-  TREASURY_PUBKEY: z.string().min(32),
+  TREASURY_OWNER_1: z.string().min(32),
+  TREASURY_OWNER_2: z.string().min(32),
+  TREASURY_OWNER_3: z.string().min(32),
+  TREASURY_OWNER_4: z.string().min(32),
+  ARBITER_PUBKEY: z.string().min(32).optional(), // defaults to resolver
   RESOLVER_KEYPAIR_PATH: z.string().default("./keys/bot-resolver.json"),
+  ARBITER_KEYPAIR_PATH: z.string().optional(), // defaults to resolver path
 
   DISCORD_BOT_TOKEN: z.string().min(1),
   DISCORD_APPLICATION_ID: z.string().min(1),

@@ -326,6 +326,28 @@ pub mod escrow {
         );
         let bet = &ctx.accounts.bet;
         require!(bet.status == BetStatus::Funded, EscrowError::InvalidState);
+        // Validate destination ATA owners + mints — without this a malicious
+        // resolver could divert refunds to any same-mint account.
+        require_keys_eq!(
+            ctx.accounts.challenger_ata.owner,
+            bet.challenger,
+            EscrowError::AtaMismatch
+        );
+        require_keys_eq!(
+            ctx.accounts.accepter_ata.owner,
+            bet.accepter,
+            EscrowError::AtaMismatch
+        );
+        require_keys_eq!(
+            ctx.accounts.challenger_ata.mint,
+            bet.mint,
+            EscrowError::WrongMint
+        );
+        require_keys_eq!(
+            ctx.accounts.accepter_ata.mint,
+            bet.mint,
+            EscrowError::WrongMint
+        );
         let amount = bet.amount;
         let bet_id_bytes = bet_id.to_le_bytes();
         let bet_bump = bet.bump;
@@ -372,6 +394,27 @@ pub mod escrow {
         require!(
             bet.status == BetStatus::Pending || bet.status == BetStatus::Funded,
             EscrowError::InvalidState
+        );
+        // Validate destination ATA owners + mints (see note in `draw`).
+        require_keys_eq!(
+            ctx.accounts.challenger_ata.owner,
+            bet.challenger,
+            EscrowError::AtaMismatch
+        );
+        require_keys_eq!(
+            ctx.accounts.accepter_ata.owner,
+            bet.accepter,
+            EscrowError::AtaMismatch
+        );
+        require_keys_eq!(
+            ctx.accounts.challenger_ata.mint,
+            bet.mint,
+            EscrowError::WrongMint
+        );
+        require_keys_eq!(
+            ctx.accounts.accepter_ata.mint,
+            bet.mint,
+            EscrowError::WrongMint
         );
         let amount = bet.amount;
         let challenger_dep = bet.challenger_deposited;

@@ -1,5 +1,5 @@
 import { AnchorProvider, Program, BN, Wallet, type Idl } from "@coral-xyz/anchor";
-import { Connection, Keypair, PublicKey } from "@solana/web3.js";
+import { Connection, Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
 import {
   getAssociatedTokenAddressSync,
   getOrCreateAssociatedTokenAccount,
@@ -23,10 +23,18 @@ function loadKeypair(p: string): Keypair {
 }
 
 export const resolver = loadKeypair(env.RESOLVER_KEYPAIR_PATH);
+export const arbiter = env.ARBITER_KEYPAIR_PATH
+  ? loadKeypair(env.ARBITER_KEYPAIR_PATH)
+  : resolver;
 export const connection = new Connection(env.SOLANA_RPC_URL, "confirmed");
 export const programId = new PublicKey(env.PROGRAM_ID);
 export const mockUsdcMint = new PublicKey(env.MOCK_USDC_MINT);
-export const treasuryPubkey = new PublicKey(env.TREASURY_PUBKEY);
+export const treasuryOwners: [PublicKey, PublicKey, PublicKey, PublicKey] = [
+  new PublicKey(env.TREASURY_OWNER_1),
+  new PublicKey(env.TREASURY_OWNER_2),
+  new PublicKey(env.TREASURY_OWNER_3),
+  new PublicKey(env.TREASURY_OWNER_4),
+];
 
 const provider = new AnchorProvider(connection, new Wallet(resolver), {
   preflightCommitment: "confirmed",
@@ -37,32 +45,7 @@ export const program = new Program<Escrow>(idl as Idl as Escrow, provider);
 
 export { BN, TOKEN_PROGRAM_ID };
 
-export async function initializeBetOnChain(args: {
-  betId: bigint;
-  amount: bigint;
-  challenger: PublicKey;
-  accepter: PublicKey;
-}) {
-  const betIdBn = new BN(args.betId.toString());
-  const [betPda] = findBetPda(programId, betIdBn);
-  const [vaultPda] = findVaultPda(programId, betIdBn);
-
-  const sig = await program.methods
-    .initializeBet(
-      betIdBn,
-      new BN(args.amount.toString()),
-      args.challenger,
-      args.accepter,
-    )
-    .accountsPartial({
-      bet: betPda,
-      vault: vaultPda,
-      mint: mockUsdcMint,
-      payer: resolver.publicKey,
-    })
-    .rpc();
-  return { sig, betPda, vaultPda };
-}
+const ZERO_TERMS_HASH: number[] = Array(32).fill(0);
 
 export async function ensureAta(owner: PublicKey) {
   const ata = await getOrCreateAssociatedTokenAccount(
@@ -75,6 +58,59 @@ export async function ensureAta(owner: PublicKey) {
   return ata.address;
 }
 
+async function getTreasuryAtas(): Promise<
+  [PublicKey, PublicKey, PublicKey, PublicKey]
+> {
+  return [
+    await ensureAta(treasuryOwners[0]),
+    await ensureAta(treasuryOwners[1]),
+    await ensureAta(treasuryOwners[2]),
+    await ensureAta(treasuryOwners[3]),
+  ];
+}
+
+export async function initializeBetOnChain(args: {
+  betId: bigint;
+  amount: bigint;
+  challenger: PublicKey;
+  accepter: PublicKey;
+  /** keccak/sha256 hash of canonical terms (32 bytes); pass null for legacy. */
+  termsHash?: Uint8Array | number[] | null;
+}) {
+  const betIdBn = new BN(args.betId.toString());
+  const [configPda] = findConfigPda(programId);
+  const [betPda] = findBetPda(programId, betIdBn);
+  const [vaultPda] = findVaultPda(programId, betIdBn);
+
+  const termsHashArr: number[] = args.termsHash
+    ? Array.from(args.termsHash)
+    : ZERO_TERMS_HASH;
+  if (termsHashArr.length !== 32) {
+    throw new Error(`termsHash must be 32 bytes, got ${termsHashArr.length}`);
+  }
+
+  const sig = await program.methods
+    .initializeBet(
+      betIdBn,
+      new BN(args.amount.toString()),
+      args.challenger,
+      args.accepter,
+      termsHashArr,
+    )
+    .accountsPartial({
+      config: configPda,
+      bet: betPda,
+      vault: vaultPda,
+      mint: mockUsdcMint,
+      resolver: resolver.publicKey,
+      payer: resolver.publicKey,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+    })
+    .rpc();
+  return { sig, betPda, vaultPda };
+}
+
 export async function resolveOnChain(args: {
   betId: bigint;
   winner: PublicKey;
@@ -85,7 +121,7 @@ export async function resolveOnChain(args: {
   const [vaultPda] = findVaultPda(programId, betIdBn);
 
   const winnerAta = await ensureAta(args.winner);
-  const treasuryAta = await ensureAta(treasuryPubkey);
+  const [t0, t1, t2, t3] = await getTreasuryAtas();
 
   const sig = await program.methods
     .resolve(betIdBn, args.winner)
@@ -94,8 +130,73 @@ export async function resolveOnChain(args: {
       bet: betPda,
       vault: vaultPda,
       winnerAta,
-      treasuryAta,
+      treasuryAta0: t0,
+      treasuryAta1: t1,
+      treasuryAta2: t2,
+      treasuryAta3: t3,
       resolver: resolver.publicKey,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    })
+    .rpc();
+  return sig;
+}
+
+export async function arbiterResolveOnChain(args: {
+  betId: bigint;
+  winner: PublicKey;
+}) {
+  const betIdBn = new BN(args.betId.toString());
+  const [configPda] = findConfigPda(programId);
+  const [betPda] = findBetPda(programId, betIdBn);
+  const [vaultPda] = findVaultPda(programId, betIdBn);
+
+  const winnerAta = await ensureAta(args.winner);
+  const arbiterAta = await ensureAta(arbiter.publicKey);
+  const [t0, t1, t2, t3] = await getTreasuryAtas();
+
+  const sig = await program.methods
+    .arbiterResolve(betIdBn, args.winner)
+    .accountsPartial({
+      config: configPda,
+      bet: betPda,
+      vault: vaultPda,
+      winnerAta,
+      treasuryAta0: t0,
+      treasuryAta1: t1,
+      treasuryAta2: t2,
+      treasuryAta3: t3,
+      arbiterAta,
+      arbiter: arbiter.publicKey,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    })
+    .signers(arbiter === resolver ? [] : [arbiter])
+    .rpc();
+  return sig;
+}
+
+export async function drawOnChain(args: {
+  betId: bigint;
+  challenger: PublicKey;
+  accepter: PublicKey;
+}) {
+  const betIdBn = new BN(args.betId.toString());
+  const [configPda] = findConfigPda(programId);
+  const [betPda] = findBetPda(programId, betIdBn);
+  const [vaultPda] = findVaultPda(programId, betIdBn);
+
+  const challengerAta = await ensureAta(args.challenger);
+  const accepterAta = await ensureAta(args.accepter);
+
+  const sig = await program.methods
+    .draw(betIdBn)
+    .accountsPartial({
+      config: configPda,
+      bet: betPda,
+      vault: vaultPda,
+      challengerAta,
+      accepterAta,
+      resolver: resolver.publicKey,
+      tokenProgram: TOKEN_PROGRAM_ID,
     })
     .rpc();
   return sig;
@@ -122,6 +223,27 @@ export async function refundOnChain(args: {
       vault: vaultPda,
       challengerAta,
       accepterAta,
+      resolver: resolver.publicKey,
+      tokenProgram: TOKEN_PROGRAM_ID,
+    })
+    .rpc();
+  return sig;
+}
+
+export async function setFeeBpsForSideOnChain(args: {
+  betId: bigint;
+  side: PublicKey;
+  newBps: number;
+}) {
+  const betIdBn = new BN(args.betId.toString());
+  const [configPda] = findConfigPda(programId);
+  const [betPda] = findBetPda(programId, betIdBn);
+
+  const sig = await program.methods
+    .setFeeBpsForSide(betIdBn, args.side, args.newBps)
+    .accountsPartial({
+      config: configPda,
+      bet: betPda,
       resolver: resolver.publicKey,
     })
     .rpc();
