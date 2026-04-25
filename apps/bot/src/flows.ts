@@ -57,10 +57,12 @@ export async function proposeBet(args: {
   tokenMint: string;
   /** Optional deadline timestamp; default = now + 7d. */
   deadline?: Date;
-  /** Tags for disambig context (challenger / accepter usernames). Optional;
-   *  empty strings if not available. */
+  /** Tags for disambig context (challenger / accepter usernames). Optional. */
   challengerTag?: string;
   accepterTag?: string;
+  /** Set when this is a Double-or-Nothing rematch. */
+  parentBetId?: bigint;
+  chainDepth?: number;
 }): Promise<
   | { ok: true; betId: bigint; shortcode: string; termsCanonical: string }
   | { ok: false; reason: "unresolvable"; detail: string }
@@ -104,6 +106,8 @@ export async function proposeBet(args: {
         shortcode,
         status: BetStatus.Proposed,
         deadline,
+        parentBetId: args.parentBetId ?? null,
+        chainDepth: args.chainDepth ?? 0,
       });
       break;
     } catch (e: any) {
@@ -173,6 +177,50 @@ export async function setAnnounceMessageId(betId: bigint, messageId: string) {
  *
  * Returns the bet on success; null if already claimed (race lost).
  */
+/**
+ * Fork a Double-or-Nothing rematch from a resolved bet. Loser becomes the new
+ * challenger, winner is the new accepter, stake doubles, parent_bet_id +
+ * chain_depth track lineage.
+ */
+export async function createRematch(args: {
+  parentBetId: bigint;
+  initiatorId: string; // must be the original loser
+}): Promise<
+  | { ok: true; betId: bigint; shortcode: string; termsCanonical: string }
+  | { ok: false; reason: string }
+> {
+  const parent = await getBet(args.parentBetId);
+  if (!parent) return { ok: false, reason: "parent bet not found" };
+  if (parent.status !== BetStatus.Resolved) {
+    return { ok: false, reason: "parent bet is not resolved" };
+  }
+  if (!parent.winnerId || !parent.accepterId) {
+    return { ok: false, reason: "parent bet has no winner / accepter" };
+  }
+  const loserId =
+    parent.winnerId === parent.challengerId
+      ? parent.accepterId
+      : parent.challengerId;
+  if (args.initiatorId !== loserId) {
+    return { ok: false, reason: "only the loser can request a rematch" };
+  }
+  const newAmount = BigInt(parent.amount) * 2n;
+
+  const result = await proposeBet({
+    guildId: parent.guildId,
+    channelId: parent.channelId,
+    challengerId: loserId,
+    accepterId: parent.winnerId,
+    amount: newAmount,
+    description: parent.description,
+    tokenMint: parent.tokenMint,
+    parentBetId: parent.id,
+    chainDepth: Number(parent.chainDepth ?? 0) + 1,
+  });
+  if (!result.ok) return { ok: false, reason: result.detail };
+  return result;
+}
+
 export async function claimOpenBet(
   betId: bigint,
   claimantId: string,
@@ -370,7 +418,9 @@ export async function reconcileBet(betId: bigint) {
       patch.fundedAt = new Date();
     }
     if (
-      (onChainStatus === BetStatus.Resolved || onChainStatus === BetStatus.Refunded) &&
+      (onChainStatus === BetStatus.Resolved ||
+        onChainStatus === BetStatus.Refunded ||
+        onChainStatus === BetStatus.Drawn) &&
       !bet.resolvedAt
     ) {
       patch.resolvedAt = new Date();

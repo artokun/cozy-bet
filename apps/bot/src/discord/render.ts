@@ -22,6 +22,9 @@ export function renderBetCard(args: {
   shortcode?: string;
   challengerReliability?: string | null;
   accepterReliability?: string | null;
+  /** Double-or-Nothing chain. >0 means this is a rematch. */
+  chainDepth?: number | null;
+  parentShortcode?: string | null;
 }) {
   const challengerLabel = args.challengerReliability
     ? `${args.challenger}\n${args.challengerReliability}`
@@ -32,8 +35,16 @@ export function renderBetCard(args: {
   const description = args.canonical
     ? `> ${args.description}\n\n**Resolves:** ${args.canonical}`
     : args.description;
+  const titleSuffix =
+    args.chainDepth && args.chainDepth > 0
+      ? args.parentShortcode
+        ? ` · 🎲 Rematch #${args.chainDepth} (parent: #${args.parentShortcode})`
+        : ` · 🎲 Rematch #${args.chainDepth}`
+      : "";
   const embed = new EmbedBuilder()
-    .setTitle(args.shortcode ? `Bet #${args.shortcode}` : `Bet #${args.betId}`)
+    .setTitle(
+      (args.shortcode ? `Bet #${args.shortcode}` : `Bet #${args.betId}`) + titleSuffix,
+    )
     .setDescription(description)
     .addFields(
       { name: "Challenger", value: challengerLabel, inline: true },

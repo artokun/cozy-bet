@@ -8,6 +8,7 @@ import {
   handleBalance,
   handleCancel,
   handleDecline,
+  handleDoubleOrNothing,
   handleDraw,
   handleHelp,
   handleLeaderboard,
@@ -69,5 +70,7 @@ export async function routeButton(i: ButtonInteraction) {
       return handleAccept(i, betId);
     case "decline":
       return handleDecline(i, betId);
+    case "don":
+      return handleDoubleOrNothing(i, betId);
   }
 }

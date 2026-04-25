@@ -1,4 +1,7 @@
 import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   SlashCommandBuilder,
   type ButtonInteraction,
   type ChatInputCommandInteraction,
@@ -11,6 +14,7 @@ import {
   claimDraw,
   claimOpenBet,
   claimWinner,
+  createRematch,
   createWalletLinkSession,
   declineBet,
   findBetByIdOrShortcode,
@@ -717,7 +721,11 @@ async function sendFundLinks(i: ButtonInteraction, betId: bigint) {
 
 /** DM both participants when a bet resolves, with the verbatim terms repeated
  *  one final time so the resolution rationale is unambiguous. Third repetition
- *  in the outcome-contract chain. */
+ *  in the outcome-contract chain.
+ *
+ *  The LOSER also gets a 🎲 Double-or-Nothing button: one-click fork into
+ *  a rematch with doubled stake. Winner gets nothing extra (they already won).
+ */
 async function sendResolutionDms(
   i: ButtonInteraction | ChatInputCommandInteraction,
   betId: bigint,
@@ -747,12 +755,80 @@ async function sendResolutionDms(
   }
 }
 
+/** 🎲 Double-or-Nothing button on the loser's resolution DM. One click forks
+ *  a rematch with doubled stake. */
+export async function handleDoubleOrNothing(
+  i: ButtonInteraction,
+  betId: bigint,
+) {
+  await i.deferUpdate();
+  const result = await createRematch({
+    parentBetId: betId,
+    initiatorId: i.user.id,
+  });
+  if (!result.ok) {
+    await i.followUp({
+      content: `Couldn't create rematch: ${result.reason}`,
+      ephemeral: true,
+    });
+    return;
+  }
+  const parent = await getBet(betId);
+  if (!parent) return;
+  const newAmount = (Number(BigInt(parent.amount)) * 2) / 1e6;
+  // Post the rematch announcement in the same channel the original was in.
+  try {
+    const ch = await i.client.channels.fetch(parent.channelId);
+    if (ch?.isTextBased() && "send" in ch) {
+      const card = renderBetCard({
+        betId: result.betId,
+        challenger: `<@${i.user.id}>`,
+        accepter: `<@${parent.winnerId ?? parent.accepterId ?? "?"}>`,
+        amount: newAmount,
+        description: parent.description,
+        canonical: result.termsCanonical !== parent.description ? result.termsCanonical : null,
+        status: "proposed",
+        shortcode: result.shortcode,
+        chainDepth: Number(parent.chainDepth ?? 0) + 1,
+        parentShortcode: parent.shortcode,
+      });
+      const winnerId =
+        parent.winnerId === parent.challengerId
+          ? parent.accepterId
+          : parent.challengerId;
+      void winnerId;
+      const msg = await ch.send({
+        content: `🎲 **Double or Nothing!** <@${parent.winnerId}> — <@${i.user.id}> wants another shot for ${newAmount.toFixed(2)} mUSDC. Bet code: \`${result.shortcode}\` (rematch of \`${parent.shortcode}\`)`,
+        embeds: [card.embed],
+        components: [card.proposeRow(result.betId)],
+      });
+      await setAnnounceMessageId(result.betId, msg.id);
+    }
+  } catch (e) {
+    console.warn("[DoN] failed to post rematch in channel:", String(e));
+  }
+  // Edit the original DM to remove the now-used button.
+  try {
+    await i.editReply({ components: [] });
+  } catch {}
+}
+
 export async function handleDecline(i: ButtonInteraction, betId: bigint) {
   await i.deferUpdate();
   const bet = await getBet(betId);
   if (!bet) return;
-  if (bet.accepterId !== i.user.id) {
-    return i.followUp({ content: "Only the challenged user can decline.", ephemeral: true });
+  // Open bets: only the challenger can cancel their own offer (until claimed).
+  // Targeted bets: only the challenged user can decline.
+  const allowed = bet.isOpen
+    ? bet.challengerId === i.user.id
+    : bet.accepterId === i.user.id;
+  if (!allowed) {
+    return i.followUp({
+      content: bet.isOpen
+        ? "Only the challenger can cancel an open bet."
+        : "Only the challenged user can decline.",
+      ephemeral: true,
+    });
   }
   await declineBet(betId, i.user.id);
   await updateAnnouncement(i.client, betId);

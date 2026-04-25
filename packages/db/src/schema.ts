@@ -61,6 +61,11 @@ export const bets = pgTable(
      *  ANTHROPIC_API_KEY is unset). This is what's keccak'd into the
      *  on-chain terms_hash + what both parties EIP-712 sign off-chain. */
     termsCanonical: text("terms_canonical"),
+    /** Double-or-Nothing chain. Set on rematches to point at the bet they
+     *  forked from. NULL for original bets. chainDepth is the count of
+     *  parents in the chain (0 = original, 1 = first rematch, etc.). */
+    parentBetId: bigint("parent_bet_id", { mode: "bigint" }),
+    chainDepth: bigint("chain_depth", { mode: "number" }).notNull().default(0),
     /** Short user-facing bet id (e.g. "K7M2RX"). Unique per row. Lowercase
      *  base32-ish (no I, L, O, 0, 1 to avoid confusion). Populated on insert. */
     shortcode: text("shortcode").notNull().unique(),
