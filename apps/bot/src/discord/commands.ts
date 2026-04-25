@@ -8,6 +8,7 @@ import { formatAmount, formatBet, renderBetCard } from "./render.js";
 import {
   acceptBet,
   adminResolve,
+  claimDraw,
   claimWinner,
   createWalletLinkSession,
   declineBet,
@@ -83,6 +84,16 @@ export const cancelCmd = new SlashCommandBuilder()
     o.setName("bet_id").setDescription("bet id").setRequired(true),
   );
 
+export const drawCmd = new SlashCommandBuilder()
+  .setName("draw")
+  .setDescription("Claim the bet was a draw (both sides must agree)")
+  .addStringOption((o) =>
+    o
+      .setName("bet_id")
+      .setDescription("bet id or shortcode")
+      .setRequired(true),
+  );
+
 export const linkwallet = new SlashCommandBuilder()
   .setName("linkwallet")
   .setDescription("Link your Solana wallet to your Discord account");
@@ -150,6 +161,7 @@ export const commandDefinitions: RESTPostAPIApplicationCommandsJSONBody[] = [
   saybet.toJSON(),
   mybets.toJSON(),
   resolveCmd.toJSON(),
+  drawCmd.toJSON(),
   cancelCmd.toJSON(),
   linkwallet.toJSON(),
   balanceCmd.toJSON(),
@@ -283,6 +295,29 @@ export async function handleResolve(i: ChatInputCommandInteraction) {
     } else {
       await i.editReply(
         `Your vote for ${winner} has been recorded. Waiting for the other side.`,
+      );
+    }
+    await updateAnnouncement(i.client, betId);
+  } catch (e: any) {
+    await i.editReply(`Error: ${e?.message ?? String(e)}`);
+  }
+}
+
+export async function handleDraw(i: ChatInputCommandInteraction) {
+  const betIdStr = i.options.getString("bet_id", true);
+  await i.deferReply();
+  const betId = await resolveBetIdFromInput(i, betIdStr);
+  if (betId === null) return;
+  try {
+    const outcome = await claimDraw(betId, i.user.id);
+    if (outcome.outcome === "drawn") {
+      await i.editReply(
+        `🤝 Draw confirmed. Both stakes refunded. tx: https://explorer.solana.com/tx/${outcome.sig}?cluster=devnet`,
+      );
+      await sendResolutionDms(i, betId);
+    } else {
+      await i.editReply(
+        `Your draw vote has been recorded. Waiting for the other side to also call /draw — or for either side to /resolve with a specific winner.`,
       );
     }
     await updateAnnouncement(i.client, betId);

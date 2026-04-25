@@ -8,6 +8,7 @@ import {
   handleBalance,
   handleCancel,
   handleDecline,
+  handleDraw,
   handleHelp,
   handleLeaderboard,
   handleLinkWallet,
@@ -27,6 +28,8 @@ export async function routeSlash(i: ChatInputCommandInteraction) {
       return handleMyBets(i);
     case "resolve":
       return handleResolve(i);
+    case "draw":
+      return handleDraw(i);
     case "cancel":
       return handleCancel(i);
     case "linkwallet":

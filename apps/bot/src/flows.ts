@@ -4,7 +4,7 @@ import { eq, and, or, sql } from "drizzle-orm";
 import { PublicKey } from "@solana/web3.js";
 import { nanoid } from "nanoid";
 import { env } from "./env.js";
-import { initializeBetOnChain, resolveOnChain, refundOnChain, fetchBetOnChain } from "./solana.js";
+import { initializeBetOnChain, resolveOnChain, refundOnChain, drawOnChain, fetchBetOnChain } from "./solana.js";
 import { disambig, termsHashOf } from "./llm.js";
 
 function db() {
@@ -399,6 +399,73 @@ export async function claimWinner(
     }
   }
   return { outcome: "pending" as const };
+}
+
+/** Either party claims a draw. When both have claimed, calls draw() on-chain. */
+export async function claimDraw(betId: bigint, actorId: string) {
+  const d = db();
+  const bet = await getBet(betId);
+  if (!bet) throw new Error("bet not found");
+  if (bet.status !== BetStatus.Funded) {
+    throw new Error(`bet is ${bet.status}, cannot claim draw`);
+  }
+  if (actorId !== bet.challengerId && actorId !== bet.accepterId) {
+    throw new Error("not a participant");
+  }
+  // A side that already claimed a winner can't simultaneously claim draw —
+  // they need to /resolve again with the same winner as the other side, or
+  // walk it back. Simpler: if either side has a winner claim recorded,
+  // claim_draw is rejected unless the side claiming draw has no winner claim.
+  // For now we just ALLOW switching from winner-claim to draw-claim; the
+  // 'resolve when both agree' check is independent.
+  const patch: Partial<typeof bets.$inferInsert> = {};
+  if (actorId === bet.challengerId) patch.challengerClaimsDraw = true;
+  else patch.accepterClaimsDraw = true;
+
+  await d.update(bets).set(patch).where(eq(bets.id, betId));
+  await d.insert(betEvents).values({
+    betId,
+    actorDiscordId: actorId,
+    eventType: "claim_draw",
+  });
+
+  const refreshed = await getBet(betId);
+  if (!refreshed) throw new Error("bet disappeared");
+  if (refreshed.challengerClaimsDraw && refreshed.accepterClaimsDraw) {
+    return await finalizeDraw(betId);
+  }
+  return { outcome: "pending" as const };
+}
+
+async function finalizeDraw(betId: bigint) {
+  const d = db();
+  const bet = await getBet(betId);
+  if (!bet) throw new Error("bet not found");
+  const challenger = await getUser(bet.challengerId);
+  const accepter = await getUser(bet.accepterId);
+  if (!challenger?.walletPubkey || !accepter?.walletPubkey) {
+    throw new Error("participant wallets missing");
+  }
+  const sig = await drawOnChain({
+    betId,
+    challenger: new PublicKey(challenger.walletPubkey),
+    accepter: new PublicKey(accepter.walletPubkey),
+  });
+  await d
+    .update(bets)
+    .set({
+      status: BetStatus.Drawn,
+      resolutionTxSig: sig,
+      resolvedAt: new Date(),
+    })
+    .where(eq(bets.id, betId));
+  await d.insert(betEvents).values({
+    betId,
+    eventType: "drawn",
+    payload: { sig },
+  });
+  await bumpReliability(bet.challengerId, bet.accepterId, bet.deadline);
+  return { outcome: "drawn" as const, sig };
 }
 
 async function finalizeResolve(betId: bigint, winnerDiscordId: string) {

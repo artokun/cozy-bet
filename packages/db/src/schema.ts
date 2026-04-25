@@ -79,6 +79,9 @@ export const bets = pgTable(
     // Resolution claims. Each party can claim a winner; when both claims match, bot resolves.
     challengerClaimsWinner: text("challenger_claims_winner"), // discord_id claim
     accepterClaimsWinner: text("accepter_claims_winner"),
+    // Draw claims (parallel to winner claims). Bool — when both true, bot calls draw() on-chain.
+    challengerClaimsDraw: boolean("challenger_claims_draw").notNull().default(false),
+    accepterClaimsDraw: boolean("accepter_claims_draw").notNull().default(false),
     winnerId: text("winner_id"), // finalized winner after on-chain resolve
     resolutionTxSig: text("resolution_tx_sig"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
