@@ -15,6 +15,9 @@ export function renderBetCard(args: {
   accepter: string;
   amount: number;
   description: string;
+  /** LLM-disambiguated canonical sentence; rendered alongside the verbatim
+   *  description if non-null + different. */
+  canonical?: string | null;
   status: string;
   shortcode?: string;
   challengerReliability?: string | null;
@@ -26,9 +29,12 @@ export function renderBetCard(args: {
   const accepterLabel = args.accepterReliability
     ? `${args.accepter}\n${args.accepterReliability}`
     : args.accepter;
+  const description = args.canonical
+    ? `> ${args.description}\n\n**Resolves:** ${args.canonical}`
+    : args.description;
   const embed = new EmbedBuilder()
     .setTitle(args.shortcode ? `Bet #${args.shortcode}` : `Bet #${args.betId}`)
-    .setDescription(args.description)
+    .setDescription(description)
     .addFields(
       { name: "Challenger", value: challengerLabel, inline: true },
       { name: "Accepter", value: accepterLabel, inline: true },

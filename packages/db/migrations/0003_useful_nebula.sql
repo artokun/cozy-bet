@@ -1,0 +1,1 @@
+ALTER TABLE "bets" ADD COLUMN "terms_canonical" text;

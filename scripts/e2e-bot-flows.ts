@@ -109,7 +109,7 @@ async function main() {
   await setUserWallet(DISCORD_B, userB.publicKey.toBase58());
 
   // 1. Propose
-  const { betId } = await proposeBet({
+  const _proposed = await proposeBet({
     guildId: "999",
     channelId: "888",
     challengerId: DISCORD_A,
@@ -118,6 +118,8 @@ async function main() {
     description: "1v1 in Apex",
     tokenMint: mint.toBase58(),
   });
+  if (!_proposed.ok) throw new Error(`proposeBet failed: ${_proposed.detail}`);
+  const betId = _proposed.betId;
   console.log("proposed bet", betId.toString());
 
   // 2. Accept

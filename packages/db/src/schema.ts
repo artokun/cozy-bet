@@ -56,6 +56,10 @@ export const bets = pgTable(
     amount: bigint("amount", { mode: "bigint" }).notNull(),
     tokenMint: text("token_mint").notNull(),
     description: text("description").notNull(),
+    /** Canonical sentence after LLM disambig (or description verbatim if
+     *  ANTHROPIC_API_KEY is unset). This is what's keccak'd into the
+     *  on-chain terms_hash + what both parties EIP-712 sign off-chain. */
+    termsCanonical: text("terms_canonical"),
     /** Short user-facing bet id (e.g. "K7M2RX"). Unique per row. Lowercase
      *  base32-ish (no I, L, O, 0, 1 to avoid confusion). Populated on insert. */
     shortcode: text("shortcode").notNull().unique(),

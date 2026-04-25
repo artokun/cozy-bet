@@ -185,7 +185,7 @@ export async function handleSaybet(i: ChatInputCommandInteraction) {
     return;
   }
 
-  const { betId, shortcode } = await proposeBet({
+  const proposed = await proposeBet({
     guildId: i.guildId,
     channelId: i.channelId,
     challengerId: i.user.id,
@@ -193,7 +193,22 @@ export async function handleSaybet(i: ChatInputCommandInteraction) {
     amount: dollarsToAtoms(amount),
     description,
     tokenMint: mockUsdcMint.toBase58(),
+    challengerTag: i.user.username,
+    accepterTag: target.username,
   });
+  if (!proposed.ok) {
+    await i.reply({
+      content: `Couldn't auto-clarify those terms: \`${proposed.detail}\`. Try rewording the description so the winning condition is unambiguous (who, when, where, how it's verified).`,
+      ephemeral: true,
+    });
+    return;
+  }
+  const { betId, shortcode, termsCanonical } = proposed;
+
+  // Show the canonical (LLM-disambig) sentence in the embed when it differs
+  // from the user's verbatim. The verbatim quote stays sacred above it.
+  const showCanonical =
+    termsCanonical.trim() !== description.trim() ? termsCanonical : null;
 
   const challengerRel = await reliabilityLabel(i.user.id);
   const accepterRel = await reliabilityLabel(target.id);
@@ -203,6 +218,7 @@ export async function handleSaybet(i: ChatInputCommandInteraction) {
     accepter: target.toString(),
     amount,
     description,
+    canonical: showCanonical,
     status: "proposed",
     shortcode,
     challengerReliability: challengerRel,

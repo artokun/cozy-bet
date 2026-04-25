@@ -5,6 +5,7 @@ import { PublicKey } from "@solana/web3.js";
 import { nanoid } from "nanoid";
 import { env } from "./env.js";
 import { initializeBetOnChain, resolveOnChain, refundOnChain, fetchBetOnChain } from "./solana.js";
+import { disambig, termsHashOf } from "./llm.js";
 
 function db() {
   return getDb(env.DATABASE_URL);
@@ -55,14 +56,36 @@ export async function proposeBet(args: {
   tokenMint: string;
   /** Optional deadline timestamp; default = now + 7d. */
   deadline?: Date;
-}) {
+  /** Tags for disambig context (challenger / accepter usernames). Optional;
+   *  empty strings if not available. */
+  challengerTag?: string;
+  accepterTag?: string;
+}): Promise<
+  | { ok: true; betId: bigint; shortcode: string; termsCanonical: string }
+  | { ok: false; reason: "unresolvable"; detail: string }
+> {
   await upsertUser(args.challengerId);
   await upsertUser(args.accepterId);
+
+  // Run disambig before creating the bet. If LLM rejects as unresolvable,
+  // refuse to create the bet — better to make the user reword than lock
+  // funds in a contract bound to ambiguous terms.
+  const disambigResult = await disambig({
+    userPhrase: args.description,
+    challengerTag: args.challengerTag ?? args.challengerId,
+    accepterTag: args.accepterTag ?? args.accepterId,
+    todayIso: new Date().toISOString().slice(0, 10),
+  });
+  if (disambigResult.kind === "unresolvable") {
+    return { ok: false, reason: "unresolvable", detail: disambigResult.reason };
+  }
+  const termsCanonical = disambigResult.canonical;
+
   const betId = BigInt(Date.now()) * 4096n + BigInt(Math.floor(Math.random() * 4096));
   const deadline = args.deadline ?? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
   const d = db();
 
-  // Insert with retry on shortcode collision (extremely unlikely with 6 chars from 30-char alphabet)
+  // Insert with retry on shortcode collision
   let shortcode = makeShortcode();
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
@@ -75,13 +98,13 @@ export async function proposeBet(args: {
         amount: args.amount,
         tokenMint: args.tokenMint,
         description: args.description,
+        termsCanonical,
         shortcode,
         status: BetStatus.Proposed,
         deadline,
       });
       break;
     } catch (e: any) {
-      // 23505 = unique violation in postgres
       if (
         e?.code === "23505" &&
         String(e?.constraint_name ?? "").includes("shortcode")
@@ -99,11 +122,13 @@ export async function proposeBet(args: {
     payload: {
       amount: args.amount.toString(),
       description: args.description,
+      termsCanonical,
+      disambigKind: disambigResult.kind,
       shortcode,
       deadline: deadline.toISOString(),
     },
   });
-  return { betId, shortcode };
+  return { ok: true, betId, shortcode, termsCanonical };
 }
 
 /** Lookup helper. Accepts either a full numeric bet_id or a shortcode. */
@@ -181,11 +206,18 @@ export async function initializeOnChain(betId: bigint) {
   if (!challenger?.walletPubkey || !accepter?.walletPubkey) {
     throw new Error("both users must link their wallets first");
   }
+  // Compute the terms hash from the canonical sentence so the on-chain bet
+  // is cryptographically bound to the agreed terms. Falls back to all-zeros
+  // for legacy bets that predate the canonical column.
+  const termsHash = bet.termsCanonical
+    ? Array.from(termsHashOf(bet.termsCanonical))
+    : null;
   const { sig, betPda, vaultPda } = await initializeBetOnChain({
     betId,
     amount: BigInt(bet.amount),
     challenger: new PublicKey(challenger.walletPubkey),
     accepter: new PublicKey(accepter.walletPubkey),
+    termsHash,
   });
   const d = db();
   await d

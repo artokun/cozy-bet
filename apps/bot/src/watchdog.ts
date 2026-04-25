@@ -81,9 +81,11 @@ async function tickDeadlineNudges(client: Client) {
   const d = getDb(env.DATABASE_URL);
   const now = new Date();
 
-  // 24h window: 22h–26h before deadline
-  const win24Start = new Date(now.getTime() + 22 * 60 * 60 * 1000);
-  const win24End = new Date(now.getTime() + 26 * 60 * 60 * 1000);
+  // 24h nudge: deadline still in the future AND <= 24h away AND not yet sent.
+  // No lower bound — if the bot was down for a while, we still catch up
+  // (single late nudge is better than none). The 2h nudge below has its own
+  // upper bound so this won't accidentally also send the 2h copy.
+  const upper24 = new Date(now.getTime() + 24 * 60 * 60 * 1000);
   const due24 = await d
     .select()
     .from(bets)
@@ -91,8 +93,8 @@ async function tickDeadlineNudges(client: Client) {
       and(
         eq(bets.status, BetStatus.Funded),
         isNull(bets.nudge24hSentAt),
-        gte(bets.deadline, win24Start),
-        lt(bets.deadline, win24End),
+        gt(bets.deadline, now),
+        lt(bets.deadline, upper24),
       ),
     );
   for (const b of due24) {
@@ -103,9 +105,8 @@ async function tickDeadlineNudges(client: Client) {
       .where(eq(bets.id, b.id));
   }
 
-  // 2h window: 1.5h–2.5h before deadline
-  const win2Start = new Date(now.getTime() + 1.5 * 60 * 60 * 1000);
-  const win2End = new Date(now.getTime() + 2.5 * 60 * 60 * 1000);
+  // 2h nudge: deadline still in the future AND <= 2h away AND not yet sent.
+  const upper2 = new Date(now.getTime() + 2 * 60 * 60 * 1000);
   const due2 = await d
     .select()
     .from(bets)
@@ -113,8 +114,8 @@ async function tickDeadlineNudges(client: Client) {
       and(
         eq(bets.status, BetStatus.Funded),
         isNull(bets.nudge2hSentAt),
-        gte(bets.deadline, win2Start),
-        lt(bets.deadline, win2End),
+        gt(bets.deadline, now),
+        lt(bets.deadline, upper2),
       ),
     );
   for (const b of due2) {
@@ -135,7 +136,7 @@ async function sendNudge(
   const verbatim = `> ${bet.description}`;
   const body =
     window === "24h"
-      ? `⏰ **${label} to go** on your bet \`${bet.shortcode}\`:\n${verbatim}\n\nMake sure you'll be around to /resolve when the time comes. If neither side resolves before the deadline, an arbiter takes max(\$100, 1% of pot) to settle it.`
+      ? `⏰ **${label} to go** on your bet \`${bet.shortcode}\`:\n${verbatim}\n\nMake sure you'll be around to /resolve when the time comes. If you and your counterparty disagree on the outcome, either side can request an arbiter (admin) — that costs max(\$100, 1% of pot) from the pot.`
       : `⏰ **${label} to go** on your bet \`${bet.shortcode}\`:\n${verbatim}\n\nBe ready to /resolve. Both sides need to confirm the same winner — or run /draw if you both agree it's a tie.`;
   for (const uid of [bet.challengerId, bet.accepterId]) {
     try {
