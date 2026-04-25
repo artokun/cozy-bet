@@ -243,6 +243,7 @@ export async function handleResolve(i: ChatInputCommandInteraction) {
       await i.editReply(
         `✅ Resolved. Winner: ${winner}. tx: https://explorer.solana.com/tx/${outcome.sig}?cluster=devnet`,
       );
+      await sendResolutionDms(i, betId);
     } else if (outcome.outcome === "disputed") {
       await i.editReply(
         `⚠️ Both parties picked different winners — bet is now disputed. An admin will step in.`,
@@ -289,6 +290,7 @@ export async function handleAdminResolve(i: ChatInputCommandInteraction) {
     await i.editReply(
       `✅ Admin resolved. Winner: ${winner}. tx: https://explorer.solana.com/tx/${outcome.sig}?cluster=devnet`,
     );
+    await sendResolutionDms(i, betId);
     await updateAnnouncement(i.client, betId);
   } catch (e: any) {
     await i.editReply(`Error: ${e?.message ?? String(e)}`);
@@ -524,10 +526,51 @@ async function sendFundLinks(i: ButtonInteraction, betId: bigint) {
   if (!bet) return;
   const tokenAmount = formatAmount(BigInt(bet.amount));
   const fundUrl = `${process.env.WEB_PUBLIC_URL}/fund/${betId}`;
+  // Repeat the verbatim canonical terms in the deposit DM so neither party
+  // can later claim they "didn't know" what they were agreeing to. This is
+  // the second of three repetitions (preview embed → deposit DM → resolve DM).
+  const dmContent = [
+    `**Deposit ${tokenAmount} mUSDC** to fund bet \`${bet.shortcode}\`:`,
+    fundUrl,
+    "",
+    "⚠️  What you're agreeing to:",
+    `> ${bet.description}`,
+    "",
+    "By depositing you confirm these terms. No refunds after deposit unless both parties agree to cancel or draw.",
+  ].join("\n");
   for (const uid of [bet.challengerId, bet.accepterId]) {
     try {
       const u = await i.client.users.fetch(uid);
-      await u.send(`Deposit ${tokenAmount} mUSDC to fund bet #${betId}: ${fundUrl}`);
+      await u.send(dmContent);
+    } catch {}
+  }
+}
+
+/** DM both participants when a bet resolves, with the verbatim terms repeated
+ *  one final time so the resolution rationale is unambiguous. Third repetition
+ *  in the outcome-contract chain. */
+async function sendResolutionDms(
+  i: ButtonInteraction | ChatInputCommandInteraction,
+  betId: bigint,
+) {
+  const bet = await getBet(betId);
+  if (!bet) return;
+  const winner = bet.winnerId ? `<@${bet.winnerId}>` : "(unknown)";
+  const txLink = bet.resolutionTxSig
+    ? `https://explorer.solana.com/tx/${bet.resolutionTxSig}?cluster=devnet`
+    : null;
+  const lines = [
+    `**Bet \`${bet.shortcode}\` resolved.** Winner: ${winner}.`,
+    "",
+    "Terms:",
+    `> ${bet.description}`,
+  ];
+  if (txLink) lines.push("", `On-chain: ${txLink}`);
+  const dmContent = lines.join("\n");
+  for (const uid of [bet.challengerId, bet.accepterId]) {
+    try {
+      const u = await i.client.users.fetch(uid);
+      await u.send(dmContent);
     } catch {}
   }
 }
