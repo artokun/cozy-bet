@@ -53,6 +53,11 @@ const schema = z.object({
     .string()
     .default("120")
     .transform((v) => parseInt(v, 10)),
+  /** Enable 24h + 2h pre-deadline nudge DMs. Idempotent per-bet. */
+  WATCHDOG_NUDGE_ENABLED: z
+    .string()
+    .default("true")
+    .transform((v) => v === "true"),
 });
 
 export const env = schema.parse(process.env);
