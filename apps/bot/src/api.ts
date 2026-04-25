@@ -2,7 +2,7 @@ import express from "express";
 import nacl from "tweetnacl";
 import bs58 from "bs58";
 import { PublicKey } from "@solana/web3.js";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { getDb, walletLinkSessions, bets, users } from "@cozy-bet/db";
 import { env, allowedGuilds } from "./env.js";
 import { recordDeposit, setUserWallet } from "./flows.js";
@@ -80,6 +80,36 @@ export function startApi(client: Client) {
       await u.send(`✅ Wallet linked: \`${walletPubkey}\``);
     } catch {}
     res.json({ ok: true });
+  });
+
+  app.get("/api/bets/recent", async (req, res) => {
+    const limit = Math.min(
+      parseInt(String(req.query.limit ?? "100"), 10) || 100,
+      500,
+    );
+    const d = getDb(env.DATABASE_URL);
+    const rows = await d
+      .select()
+      .from(bets)
+      .orderBy(sql`${bets.createdAt} DESC`)
+      .limit(limit);
+    res.json(
+      rows.map((b) => ({
+        id: b.id.toString(),
+        shortcode: b.shortcode,
+        status: b.status,
+        amount: b.amount.toString(),
+        description: b.description,
+        challengerId: b.challengerId,
+        accepterId: b.accepterId,
+        winnerId: b.winnerId,
+        isOpen: b.isOpen,
+        createdAt: b.createdAt.toISOString(),
+        resolvedAt: b.resolvedAt?.toISOString() ?? null,
+        resolutionTxSig: b.resolutionTxSig,
+        chainDepth: Number(b.chainDepth ?? 0),
+      })),
+    );
   });
 
   app.get("/api/bet/:id", async (req, res) => {
