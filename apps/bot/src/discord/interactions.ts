@@ -12,6 +12,7 @@ import {
   handleLeaderboard,
   handleLinkWallet,
   handleMyBets,
+  handlePreviewTerms,
   handleReconcile,
   handleResolve,
   handleSaybet,
@@ -42,6 +43,8 @@ export async function routeSlash(i: ChatInputCommandInteraction) {
       return handleAdminResolve(i);
     case "reconcile":
       return handleReconcile(i);
+    case "preview-terms":
+      return handlePreviewTerms(i);
   }
 }
 

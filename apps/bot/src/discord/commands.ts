@@ -104,6 +104,16 @@ export const reconcile = new SlashCommandBuilder()
     o.setName("bet_id").setDescription("bet id").setRequired(true),
   );
 
+export const previewTermsCmd = new SlashCommandBuilder()
+  .setName("preview-terms")
+  .setDescription("(admin) Try the LLM disambig on a phrase without creating a bet")
+  .addStringOption((o) =>
+    o.setName("phrase").setDescription("the bet phrase").setRequired(true),
+  )
+  .addUserOption((o) =>
+    o.setName("user").setDescription("hypothetical accepter (for context)"),
+  );
+
 export const helpCmd = new SlashCommandBuilder()
   .setName("help")
   .setDescription("How to use cozy-bet");
@@ -148,6 +158,7 @@ export const commandDefinitions: RESTPostAPIApplicationCommandsJSONBody[] = [
   leaderboardCmd.toJSON(),
   adminresolve.toJSON(),
   reconcile.toJSON(),
+  previewTermsCmd.toJSON(),
 ];
 
 export async function handleSaybet(i: ChatInputCommandInteraction) {
@@ -414,6 +425,49 @@ export async function handleLeaderboard(i: ChatInputCommandInteraction) {
         ? "💵 Top wagered"
         : "📊 Top win rate";
   await i.reply({ content: `${heading}\n${lines.join("\n")}` });
+}
+
+export async function handlePreviewTerms(i: ChatInputCommandInteraction) {
+  if (!isAdmin(i.user.id)) {
+    await i.reply({ content: "Admin only.", ephemeral: true });
+    return;
+  }
+  const phrase = i.options.getString("phrase", true);
+  const target = i.options.getUser("user");
+  await i.deferReply({ ephemeral: true });
+  try {
+    const { disambig, termsHashOf } = await import("../llm.js");
+    const result = await disambig({
+      userPhrase: phrase,
+      challengerTag: i.user.username,
+      accepterTag: target?.username ?? "the other side",
+      todayIso: new Date().toISOString().slice(0, 10),
+    });
+    if (result.kind === "skipped") {
+      await i.editReply(
+        `LLM not configured (ANTHROPIC_API_KEY unset). Verbatim passthrough:\n> ${phrase}`,
+      );
+      return;
+    }
+    if (result.kind === "unresolvable") {
+      await i.editReply(`Cannot auto-clarify: \`${result.reason}\``);
+      return;
+    }
+    const hash = Buffer.from(termsHashOf(result.canonical)).toString("hex");
+    await i.editReply(
+      [
+        `**User phrase (verbatim, sacred):**`,
+        `> ${phrase}`,
+        ``,
+        `**Canonical (LLM disambig):**`,
+        `> ${result.canonical}`,
+        ``,
+        `**termsHash (keccak256):** \`0x${hash}\``,
+      ].join("\n"),
+    );
+  } catch (e: any) {
+    await i.editReply(`Error: ${e?.message ?? String(e)}`);
+  }
 }
 
 export async function handleHelp(i: ChatInputCommandInteraction) {

@@ -31,6 +31,13 @@ const schema = z.object({
     .transform((v) => v === "true"),
   ADMIN_DISCORD_IDS: z.string().optional(), // comma-separated discord user ids
 
+  // LLM disambig (cozy-bet-4bt). Used to convert ambiguous bet phrasing
+  // into a canonical sentence that both parties confirm before the bet is
+  // created on-chain. If unset, /saybet still works but skips the
+  // disambig step (description is used verbatim).
+  ANTHROPIC_API_KEY: z.string().optional(),
+  DISAMBIG_MODEL: z.string().default("claude-haiku-4-5-20251001"),
+
   DATABASE_URL: z.string().url(),
 
   WEB_PUBLIC_URL: z.string().url().default("http://localhost:3000"),
