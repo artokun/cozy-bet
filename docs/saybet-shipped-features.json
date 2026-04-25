@@ -1,0 +1,61 @@
+{
+  "nodes": [
+    {
+      "key": "s-double-or-nothing",
+      "title": "Bot: Double-or-Nothing rematch flow",
+      "type": "feature",
+      "priority": 2,
+      "parent": "cozy-bet-ppf",
+      "description": "After resolve, winner DM gets a 🎲 'Double or Nothing' button. Click → modal pre-filled prompting loser to type new criteria → bot doubles the original stake + forks a rematch bet stamped with parent_bet_id + chain_depth. 5-min TTL on rematch drafts (sweep stale offers via watchdog). Embeds on descendant bets show '🎲 Rematch: #N (parent: #shortcode)'.\n\nDB: add bets.parent_bet_id, bets.chain_depth (int), bets.is_rematch_draft + draft expires_at fields. Migration.\n\nViral: every win surfaces a one-tap rematch CTA. Saybet shipped this as their Phase 1.10."
+    },
+    {
+      "key": "s-open-bets",
+      "title": "Bot: open bets — /saybet with no opponent",
+      "type": "feature",
+      "priority": 2,
+      "parent": "cozy-bet-ppf",
+      "description": "/saybet amount:10 criteria:\"...\" with NO opponent option = open challenge, first user in the channel to tap Accept takes the other side.\n\nFlow: bot posts public embed '⚔️ <@challenger> is throwing it out there — first to tap Accept takes the other side'. ATOMIC claim race: only one accept wins regardless of how fast people click. Self-claim blocked. Outstanding-bet gate applies to claimer too.\n\nDB: bets.accepter_id becomes nullable. New column bets.is_open_bet. Migration.\n\nSaybet shipped as Phase 1.10b. Plumb through their atomic claim test pattern."
+    },
+    {
+      "key": "s-negotiation",
+      "title": "Bot: 10-round negotiation back-and-forth",
+      "type": "feature",
+      "priority": 2,
+      "parent": "cozy-bet-ppf",
+      "description": "Counter-offer flow before bet is locked in. Plays alongside our chat-disambig (s-disambig-chat): disambig nails down WHAT the bet is; negotiation lets either side adjust amount/deadline/terms before accepting.\n\nFlow:\n1. Challenge embed has [Accept] [Decline] AND [✏️ Propose Changes].\n2. Propose → modal pre-filled with current criteria (or amount/deadline) → submit.\n3. LLM re-normalises the counter-proposal canonical sentence.\n4. Other party receives DM 'Counter from <@you> · Round 1 of 10' with [Accept | Counter Back | Walk Away].\n5. Repeat up to 10 rounds. Round 10 → snark cancel: '🫠 Ten rounds and you mandem still can't agree. saybet don't move like that. Bet cancelled.' (post in channel + both DMs).\n6. Walk Away during negotiation = unilateral cancel (bet wasn't mutually accepted yet).\n7. Persist every round in bets_negotiation_history (bet_id, round, actor, proposed_terms_canonical, created_at).\n\nMigration: bets.negotiation_round int default 0; new bet_negotiation_history table.\n\nMajor dispute-prevention play. Saybet shipped as Phase 1.11."
+    },
+    {
+      "key": "s-cancel-expirer",
+      "title": "Bot: 24h timeout on pending cancel requests",
+      "type": "task",
+      "priority": 2,
+      "parent": "cozy-bet-ppf",
+      "description": "When a participant requests /cancel, the counterparty has 24h to Agree or Deny. After 24h with no response, request auto-reverts (no cancel happens, bet stays in its current state). Implement in apps/bot/src/watchdog.ts as a sibling to the deadline nudge cron.\n\nDB: cancel_requested_at field on bets (nullable). Migration."
+    },
+    {
+      "key": "s-eip712-resolve",
+      "title": "Contract+Bot: EIP-712 sigs for gasless resolve confirmation",
+      "type": "feature",
+      "priority": 3,
+      "parent": "cozy-bet-ppf",
+      "description": "Extend our EIP-712 outcome-contract pattern (s-eip712-sig is for INITIAL terms): also use EIP-712 typed-data sigs for the resolve confirmation step. Either participant signs 'I confirm <winner> won bet <id>' off-chain; bot collects both sigs; if they match (same winner), bot calls resolve() on-chain itself. Users never pay gas on the confirm step.\n\nIf sigs disagree → arbiter path triggers (existing s-disambig-chat / arbiterResolve flow).\n\nSaved gas: ~$0.002 per resolve on Solana, but more importantly removes the 'wallet popup confirm' friction at resolution time. Users just tap a Discord button.\n\nLow priority — only worth doing once we have volume. Saybet's Phase 3+ design called for this."
+    },
+    {
+      "key": "s-squads-multisig",
+      "title": "Ops: Squads multisig for Solana treasury (replaces Safe-on-Base plan)",
+      "type": "task",
+      "priority": 2,
+      "parent": "cozy-bet-ppf",
+      "description": "After the Solana pivot, treasury multisig is Squads (https://squads.so) — Solana-native, same idea as Safe on EVM. Ops plan:\n\n1. Now → first real money: 2-of-3 Squads on Solana mainnet. Three hardware wallets (Ledger Nano X with Solana app) physically distributed across team.\n2. Real treasury: separate hot operational Squads (2-of-3, lower amounts) from cold treasury Squads (3-of-5, larger amounts). Auto-sweep operational → cold above threshold.\n3. Volume: look at programmatic signers (e.g., Turnkey Solana support) for per-tx automation.\n\nFor MVP testnet (current): a single resolver hot wallet has DEFAULT_ADMIN_ROLE. Migrate to Squads pre-mainnet.\n\nSupersedes the earlier Safe-multisig plan since we pivoted off Base."
+    },
+    {
+      "key": "s-cozy-bet-positioning",
+      "title": "Docs: cozy-bet positioning (the saybet supersession story)",
+      "type": "task",
+      "priority": 3,
+      "parent": "cozy-bet-ppf",
+      "description": "Capture the strategic positioning: cozy-bet is the version saybet wanted to be, more professionally built. Specifically the architectural divergence:\n\n- Saybet: custodial buckets per chain; operator is market-maker; rebalance manually + via CCTP; users trust saybet not to rug.\n- Cozy-bet: non-custodial smart-contract escrow on Solana; multi-chain ingest via Mayan/Squid aggregator (CCTP burn-and-mint); funds never sit with operator.\n\nWrite docs/positioning.md or extend README. Frame:\n- What we are: 'bridging online larps with real stakes' (saybet's framing — credit it).\n- What's different vs saybet: non-custodial, smart-contract-enforced, EIP-712 signed terms.\n- Why this matters: lower regulatory exposure (no money-transmitter posture), no rug-pull trust, real arbiter path with on-chain accountability."
+    }
+  ],
+  "edges": []
+}

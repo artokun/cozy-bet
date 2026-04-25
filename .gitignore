@@ -21,6 +21,9 @@ apps/program/test-ledger
 # Postgres data
 pgdata/
 
+# Local-only docs (chat dumps, scratch notes — not committed)
+docs/.local/
+
 # Beads / Dolt files (added by bd init)
 .dolt/
 *.db
