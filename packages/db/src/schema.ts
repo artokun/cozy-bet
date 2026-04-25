@@ -30,6 +30,12 @@ export const users = pgTable("users", {
   walletPubkey: text("wallet_pubkey"), // null until user completes sign-message link
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   linkedAt: timestamp("linked_at", { withTimezone: true }),
+  /** Reliability score (cozy-bet-2tw). Updated on every completed bet:
+   *  resolve_events += 1 for both participants; if resolved within 24h of
+   *  the deadline, resolve_score_good += 1. Surfaced as
+   *  `${good}/${events}` ratio on /saybet challenge embed + /status. */
+  resolveEvents: bigint("resolve_events", { mode: "number" }).notNull().default(0),
+  resolveScoreGood: bigint("resolve_score_good", { mode: "number" }).notNull().default(0),
 });
 
 export const bets = pgTable(

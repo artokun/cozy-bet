@@ -394,7 +394,45 @@ async function finalizeResolve(betId: bigint, winnerDiscordId: string) {
     eventType: "resolved",
     payload: { sig, winner: winnerDiscordId },
   });
+  await bumpReliability(bet.challengerId, bet.accepterId, bet.deadline);
   return { outcome: "resolved" as const, sig, winnerDiscordId };
+}
+
+/** Increment resolve_events for both participants. Increment resolve_score_good
+ *  only if resolved within 24h of the deadline (or 24h of now if deadline
+ *  isn't set). Called on every completed bet (resolved/drawn/refunded). */
+async function bumpReliability(
+  challengerId: string,
+  accepterId: string,
+  deadline: Date | null,
+) {
+  const d = db();
+  const now = new Date();
+  const within24h = deadline
+    ? Math.abs(now.getTime() - deadline.getTime()) <= 24 * 60 * 60 * 1000
+    : true; // no deadline = treat as on-time
+  for (const uid of [challengerId, accepterId]) {
+    if (within24h) {
+      await d.execute(
+        sql`UPDATE users SET resolve_events = resolve_events + 1, resolve_score_good = resolve_score_good + 1 WHERE discord_id = ${uid}`,
+      );
+    } else {
+      await d.execute(
+        sql`UPDATE users SET resolve_events = resolve_events + 1 WHERE discord_id = ${uid}`,
+      );
+    }
+  }
+}
+
+/** Returns "92% confirm rate (24 bets)" or null if user has no events yet. */
+export async function reliabilityLabel(discordId: string): Promise<string | null> {
+  const u = await getUser(discordId);
+  if (!u) return null;
+  const events = Number(u.resolveEvents ?? 0);
+  if (events < 1) return null;
+  const good = Number(u.resolveScoreGood ?? 0);
+  const pct = Math.round((good / events) * 100);
+  return `✋ ${pct}% confirm rate (${events} bet${events === 1 ? "" : "s"})`;
 }
 
 /** Admin can force-resolve a disputed bet. Bypasses mutual consent. */
@@ -452,6 +490,7 @@ export async function refundBet(betId: bigint) {
     eventType: "refunded",
     payload: { sig },
   });
+  await bumpReliability(bet.challengerId, bet.accepterId, bet.deadline);
   return sig;
 }
 

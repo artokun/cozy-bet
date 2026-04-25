@@ -21,6 +21,7 @@ import {
   proposeBet,
   reconcileBet,
   refundBet,
+  reliabilityLabel,
   setAnnounceMessageId,
 } from "../flows.js";
 import { isAdmin } from "../env.js";
@@ -183,6 +184,8 @@ export async function handleSaybet(i: ChatInputCommandInteraction) {
     tokenMint: mockUsdcMint.toBase58(),
   });
 
+  const challengerRel = await reliabilityLabel(i.user.id);
+  const accepterRel = await reliabilityLabel(target.id);
   const card = renderBetCard({
     betId,
     challenger: i.user.toString(),
@@ -191,6 +194,8 @@ export async function handleSaybet(i: ChatInputCommandInteraction) {
     description,
     status: "proposed",
     shortcode,
+    challengerReliability: challengerRel,
+    accepterReliability: accepterRel,
   });
   await i.reply({
     content: `${target}, you've been challenged. Bet code: \`${shortcode}\``,
@@ -328,10 +333,13 @@ export async function handleStatus(i: ChatInputCommandInteraction) {
     return;
   }
   const tokenAmount = formatAmount(BigInt(bet.amount));
+  const challengerRel = await reliabilityLabel(bet.challengerId);
+  const accepterRel = await reliabilityLabel(bet.accepterId);
   const lines: string[] = [
     `**Bet #${bet.shortcode}** — _${bet.status}_`,
     `> ${bet.description}`,
-    `<@${bet.challengerId}> vs <@${bet.accepterId}> · ${tokenAmount} mUSDC each · pot ${(Number(BigInt(bet.amount)) / 1e6 * 2).toFixed(2)} mUSDC`,
+    `<@${bet.challengerId}>${challengerRel ? ` (${challengerRel})` : ""} vs <@${bet.accepterId}>${accepterRel ? ` (${accepterRel})` : ""}`,
+    `${tokenAmount} mUSDC each · pot ${(Number(BigInt(bet.amount)) / 1e6 * 2).toFixed(2)} mUSDC`,
   ];
   if (bet.deadline) {
     const deadlineUnix = Math.floor(new Date(bet.deadline).getTime() / 1000);

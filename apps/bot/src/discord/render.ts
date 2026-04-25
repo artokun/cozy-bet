@@ -17,13 +17,21 @@ export function renderBetCard(args: {
   description: string;
   status: string;
   shortcode?: string;
+  challengerReliability?: string | null;
+  accepterReliability?: string | null;
 }) {
+  const challengerLabel = args.challengerReliability
+    ? `${args.challenger}\n${args.challengerReliability}`
+    : args.challenger;
+  const accepterLabel = args.accepterReliability
+    ? `${args.accepter}\n${args.accepterReliability}`
+    : args.accepter;
   const embed = new EmbedBuilder()
     .setTitle(args.shortcode ? `Bet #${args.shortcode}` : `Bet #${args.betId}`)
     .setDescription(args.description)
     .addFields(
-      { name: "Challenger", value: args.challenger, inline: true },
-      { name: "Accepter", value: args.accepter, inline: true },
+      { name: "Challenger", value: challengerLabel, inline: true },
+      { name: "Accepter", value: accepterLabel, inline: true },
       { name: "Stake", value: `${args.amount} mUSDC each`, inline: true },
       { name: "Status", value: args.status, inline: false },
     )

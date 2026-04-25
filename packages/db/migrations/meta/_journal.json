@@ -15,6 +15,13 @@
       "when": 1777076583464,
       "tag": "0001_previous_vindicator",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777079050192,
+      "tag": "0002_light_spyke",
+      "breakpoints": true
     }
   ]
 }
