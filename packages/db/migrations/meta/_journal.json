@@ -64,6 +64,13 @@
       "when": 1777096039464,
       "tag": "0008_adorable_maggott",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1777242487921,
+      "tag": "0009_wonderful_invaders",
+      "breakpoints": true
     }
   ]
 }

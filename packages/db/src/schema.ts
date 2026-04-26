@@ -12,6 +12,9 @@ import {
   pgEnum,
 } from "drizzle-orm/pg-core";
 
+/** Settlement chain. Each bet lives entirely on one chain. */
+export const chainEnum = pgEnum("chain", ["solana", "base"]);
+
 /** Mirrors packages/shared/src/index.ts BetStatus. */
 export const betStatusEnum = pgEnum("bet_status", [
   "proposed",
@@ -27,7 +30,13 @@ export const betStatusEnum = pgEnum("bet_status", [
 
 export const users = pgTable("users", {
   discordId: text("discord_id").primaryKey(),
-  walletPubkey: text("wallet_pubkey"), // null until user completes sign-message link
+  /** Solana wallet pubkey (base58). null until linked. */
+  walletPubkey: text("wallet_pubkey"),
+  /** Base/EVM wallet address (0x… hex). null until linked. */
+  evmAddress: text("evm_address"),
+  /** Which chain this user prefers when /saybet doesn't specify. Defaults
+   *  to whichever chain they linked first. */
+  preferredChain: chainEnum("preferred_chain"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   linkedAt: timestamp("linked_at", { withTimezone: true }),
   /** Reliability score (cozy-bet-2tw). Updated on every completed bet:
@@ -55,6 +64,8 @@ export const bets = pgTable(
     isOpen: boolean("is_open").notNull().default(false),
     // Amount in atomic units of the mint (e.g. 50_000_000 = 50 tokens @ 6 decimals).
     amount: bigint("amount", { mode: "bigint" }).notNull(),
+    /** Settlement chain — locked at bet creation, can't change. */
+    chain: chainEnum("chain").notNull().default("solana"),
     tokenMint: text("token_mint").notNull(),
     description: text("description").notNull(),
     /** Canonical sentence after LLM disambig (or description verbatim if

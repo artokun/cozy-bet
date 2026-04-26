@@ -21,6 +21,16 @@ const schema = z.object({
   RESOLVER_KEYPAIR_PATH: z.string().default("./keys/bot-resolver.json"),
   ARBITER_KEYPAIR_PATH: z.string().optional(), // defaults to resolver path
 
+  // EVM (Base) — optional; if unset, the bot won't accept Base bets.
+  EVM_NETWORK: z.enum(["base-sepolia", "base"]).default("base-sepolia"),
+  RESOLVER_PRIVATE_KEY: z.string().optional(), // 0x-prefixed 64-hex
+  EVM_ESCROW_ADDRESS: z.string().optional(), // 0x… deployed CozyBetEscrow
+  EVM_USDC_ADDRESS: z.string().optional(), // 0x… USDC mint
+  EVM_TREASURY_OWNER_1: z.string().optional(),
+  EVM_TREASURY_OWNER_2: z.string().optional(),
+  EVM_TREASURY_OWNER_3: z.string().optional(),
+  EVM_TREASURY_OWNER_4: z.string().optional(),
+
   DISCORD_BOT_TOKEN: z.string().min(1),
   DISCORD_APPLICATION_ID: z.string().min(1),
   DISCORD_TEST_GUILD_ID: z.string().optional(),
