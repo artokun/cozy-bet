@@ -1,0 +1,58 @@
+name: testnet smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/program/**'
+      - 'apps/contracts/**'
+      - 'scripts/testnet-smoke.ts'
+      - '.github/workflows/testnet-smoke.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/program/**'
+      - 'apps/contracts/**'
+      - 'scripts/testnet-smoke.ts'
+      - '.github/workflows/testnet-smoke.yml'
+  schedule:
+    # Every 6 hours — catches drift if treasury rotates or someone redeploys
+    # without committing the new addresses.
+    - cron: '23 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Run testnet smoke (read-only, no funds spent)
+        run: pnpm tsx scripts/testnet-smoke.ts
+
+      # Lifecycle tests are gated on having RESOLVER_PRIVATE_KEY in repo
+      # secrets — they SPEND testnet SOL/ETH/USDC. Add the secret in
+      # repo settings → Secrets and variables → Actions to enable.
+      - name: Run Solana lifecycle (devnet)
+        if: env.RESOLVER_PRIVATE_KEY != ''
+        env:
+          RESOLVER_PRIVATE_KEY: ${{ secrets.RESOLVER_PRIVATE_KEY }}
+        run: pnpm tsx scripts/testnet-lifecycle-solana.ts
+
+      - name: Run Base lifecycle (Sepolia)
+        if: env.RESOLVER_PRIVATE_KEY != ''
+        env:
+          RESOLVER_PRIVATE_KEY: ${{ secrets.RESOLVER_PRIVATE_KEY }}
+        run: pnpm tsx scripts/testnet-lifecycle-base.ts

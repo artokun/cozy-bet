@@ -14,7 +14,12 @@
     "program:build": "pnpm --filter @cozy-bet/program build",
     "program:test": "pnpm --filter @cozy-bet/program test",
     "program:test:local": "pnpm --filter @cozy-bet/program test:local",
-    "program:deploy": "pnpm --filter @cozy-bet/program deploy"
+    "program:deploy": "pnpm --filter @cozy-bet/program deploy",
+    "contracts:build": "pnpm --filter @cozy-bet/contracts build",
+    "contracts:test": "pnpm --filter @cozy-bet/contracts test",
+    "testnet:smoke": "tsx scripts/testnet-smoke.ts",
+    "testnet:lifecycle:solana": "tsx scripts/testnet-lifecycle-solana.ts",
+    "testnet:lifecycle:base": "tsx scripts/testnet-lifecycle-base.ts"
   },
   "devDependencies": {
     "@coinbase/cdp-sdk": "^1.48.2",
