@@ -124,6 +124,7 @@ export function startApi(client: Client) {
     res.json(
       rows.map((b) => ({
         id: b.id.toString(),
+        chain: b.chain,
         shortcode: b.shortcode,
         status: b.status,
         amount: b.amount.toString(),

@@ -29,7 +29,12 @@ export default async function BetStatusPage({
         <h2>{bet.description}</h2>
         <div className="row">
           <span className="muted">Amount per side</span>
-          <span>{tokenAmount} mUSDC</span>
+          <span>
+            {tokenAmount} USDC ·{" "}
+            <span className="muted">
+              {bet.chain === "solana" ? "Solana" : "Base"}
+            </span>
+          </span>
         </div>
         <div className="row">
           <span className="muted">Status</span>

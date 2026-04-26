@@ -10,6 +10,7 @@ const SOLANA_CLUSTER = process.env.NEXT_PUBLIC_SOLANA_CLUSTER ?? "devnet";
 
 type RecentBet = {
   id: string;
+  chain: "solana" | "base";
   shortcode: string;
   status: string;
   amount: string;
@@ -23,6 +24,12 @@ type RecentBet = {
   resolutionTxSig: string | null;
   chainDepth: number;
 };
+
+function explorerTxUrl(chain: "solana" | "base", sig: string): string {
+  return chain === "solana"
+    ? `https://explorer.solana.com/tx/${sig}?cluster=${SOLANA_CLUSTER}`
+    : `https://sepolia.basescan.org/tx/${sig}`;
+}
 
 const STATUS_CHIP: Record<string, { label: string; color: string }> = {
   proposed: { label: "Proposed", color: "#5b8cff" },
@@ -64,15 +71,7 @@ export default async function ExplorerPage() {
         <h1>cozy-bet explorer</h1>
         <p className="muted">
           Last {bets.length} bets across all servers. Public, read-only.
-          Resolution txs link to{" "}
-          <a
-            href={`https://explorer.solana.com/?cluster=${SOLANA_CLUSTER}`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Solana explorer
-          </a>
-          .
+          Resolution txs link to the chain explorer (Solscan or Basescan).
         </p>
         {bets.length === 0 ? (
           <p className="muted" style={{ marginTop: 24 }}>
@@ -120,8 +119,14 @@ export default async function ExplorerPage() {
                         🎲 Rematch #{b.chainDepth}
                       </span>
                     )}
+                    <span
+                      className="muted"
+                      style={{ fontSize: 12, textTransform: "capitalize" }}
+                    >
+                      {b.chain}
+                    </span>
                     <span style={{ marginLeft: "auto", fontSize: 13 }}>
-                      <strong>{fmtUSDC(b.amount)} mUSDC</strong>{" "}
+                      <strong>{fmtUSDC(b.amount)} USDC</strong>{" "}
                       <span className="muted">each</span>
                     </span>
                   </div>
@@ -147,7 +152,7 @@ export default async function ExplorerPage() {
                       <>
                         {" · "}
                         <a
-                          href={`https://explorer.solana.com/tx/${b.resolutionTxSig}?cluster=${SOLANA_CLUSTER}`}
+                          href={explorerTxUrl(b.chain, b.resolutionTxSig)}
                           target="_blank"
                           rel="noreferrer"
                         >
