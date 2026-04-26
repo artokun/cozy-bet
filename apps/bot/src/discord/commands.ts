@@ -8,6 +8,7 @@ import {
   type RESTPostAPIApplicationCommandsJSONBody,
 } from "discord.js";
 import { formatAmount, formatBet, renderBetCard } from "./render.js";
+import { chainExplorerTxUrl, type Chain } from "../chain.js";
 import {
   acceptBet,
   adminResolve,
@@ -296,12 +297,14 @@ export async function handleSaybet(i: ChatInputCommandInteraction) {
     canonical: showCanonical,
     status: "proposed",
     shortcode,
+    settlementChain: proposed.chain,
     challengerReliability: challengerRel,
     accepterReliability: accepterRel,
   });
+  const chainLabel = proposed.chain === "solana" ? "Solana" : "Base";
   const replyContent = target
-    ? `${target}, you've been challenged. Bet code: \`${shortcode}\``
-    : `⚔️ <@${i.user.id}> is throwing it out there for **${amount} mUSDC** — first mandem to tap Accept takes the other side. Bet code: \`${shortcode}\``;
+    ? `${target}, you've been challenged. Bet code: \`${shortcode}\` (${chainLabel})`
+    : `⚔️ <@${i.user.id}> is throwing it out there for **${amount} USDC on ${chainLabel}** — first mandem to tap Accept takes the other side. Bet code: \`${shortcode}\``;
   await i.editReply({
     content: replyContent,
     embeds: [card.embed],
@@ -350,8 +353,10 @@ export async function handleResolve(i: ChatInputCommandInteraction) {
   try {
     const outcome = await claimWinner(betId, i.user.id, winner.id);
     if (outcome.outcome === "resolved") {
+      const bet = await getBet(betId);
+      const url = chainExplorerTxUrl(bet?.chain as Chain, outcome.sig);
       await i.editReply(
-        `✅ Resolved. Winner: ${winner}. tx: https://explorer.solana.com/tx/${outcome.sig}?cluster=devnet`,
+        `✅ Resolved. Winner: ${winner}. tx: ${url}`,
       );
       await sendResolutionDms(i, betId);
     } else if (outcome.outcome === "disputed") {
@@ -377,8 +382,10 @@ export async function handleDraw(i: ChatInputCommandInteraction) {
   try {
     const outcome = await claimDraw(betId, i.user.id);
     if (outcome.outcome === "drawn") {
+      const bet = await getBet(betId);
+      const url = chainExplorerTxUrl(bet?.chain as Chain, outcome.sig);
       await i.editReply(
-        `🤝 Draw confirmed. Both stakes refunded. tx: https://explorer.solana.com/tx/${outcome.sig}?cluster=devnet`,
+        `🤝 Draw confirmed. Both stakes refunded. tx: ${url}`,
       );
       await sendResolutionDms(i, betId);
     } else {
@@ -578,9 +585,11 @@ export async function handleCancelAgree(i: ButtonInteraction, betId: bigint) {
   await i.deferUpdate();
   try {
     const { sig } = await agreeCancel(betId, i.user.id);
+    const bet = await getBet(betId);
+    const url = chainExplorerTxUrl(bet?.chain as Chain, sig);
     await i.editReply({ components: [] });
     await i.followUp({
-      content: `↩️ Both sides refunded. tx: https://explorer.solana.com/tx/${sig}?cluster=devnet`,
+      content: `↩️ Both sides refunded. tx: ${url}`,
       ephemeral: false,
     });
     await updateAnnouncement(i.client, betId);
@@ -622,8 +631,10 @@ export async function handleAdminResolve(i: ChatInputCommandInteraction) {
   if (betId === null) return;
   try {
     const outcome = await adminResolve(betId, i.user.id, winner.id);
+    const bet = await getBet(betId);
+    const url = chainExplorerTxUrl(bet?.chain as Chain, outcome.sig);
     await i.editReply(
-      `✅ Admin resolved. Winner: ${winner}. tx: https://explorer.solana.com/tx/${outcome.sig}?cluster=devnet`,
+      `✅ Admin resolved. Winner: ${winner}. tx: ${url}`,
     );
     await sendResolutionDms(i, betId);
     await updateAnnouncement(i.client, betId);
@@ -690,7 +701,7 @@ export async function handleStatus(i: ChatInputCommandInteraction) {
   }
   if (bet.resolutionTxSig) {
     lines.push(
-      `Tx: [explorer](https://explorer.solana.com/tx/${bet.resolutionTxSig}?cluster=devnet)`,
+      `Tx: [explorer](${chainExplorerTxUrl(bet.chain as Chain, bet.resolutionTxSig)})`,
     );
   }
   if (bet.challengerClaimsWinner || bet.accepterClaimsWinner) {
@@ -1015,7 +1026,7 @@ async function sendResolutionDms(
   if (!bet) return;
   const winner = bet.winnerId ? `<@${bet.winnerId}>` : "(unknown)";
   const txLink = bet.resolutionTxSig
-    ? `https://explorer.solana.com/tx/${bet.resolutionTxSig}?cluster=devnet`
+    ? chainExplorerTxUrl(bet.chain as Chain, bet.resolutionTxSig)
     : null;
   const lines = [
     `**Bet \`${bet.shortcode}\` resolved.** Winner: ${winner}.`,
@@ -1091,6 +1102,7 @@ export async function handleDoubleOrNothing(
         canonical: result.termsCanonical !== parent.description ? result.termsCanonical : null,
         status: "proposed",
         shortcode: result.shortcode,
+        settlementChain: result.chain,
         chainDepth: Number(parent.chainDepth ?? 0) + 1,
         parentShortcode: parent.shortcode,
       });

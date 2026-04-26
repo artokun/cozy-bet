@@ -12,6 +12,7 @@ import { getDb, users, betEvents } from "@cozy-bet/db";
 import { eq } from "drizzle-orm";
 import { env } from "../env.js";
 import { formatAmount } from "./render.js";
+import { chainExplorerTxUrl, type Chain } from "../chain.js";
 
 const STATUS_COLORS: Record<string, number> = {
   proposed: 0x5b8cff,
@@ -55,6 +56,8 @@ export async function updateAnnouncement(client: Client, betId: bigint) {
     ? `<@${bet.accepterId}>`
     : "_(open — first to claim)_";
 
+  const chain = bet.chain as Chain;
+  const chainSuffix = chain === "solana" ? "Solana" : "Base";
   const embed = new EmbedBuilder()
     .setTitle(`Bet #${bet.shortcode ?? bet.id}`)
     .setDescription(bet.description)
@@ -62,7 +65,11 @@ export async function updateAnnouncement(client: Client, betId: bigint) {
     .addFields(
       { name: "Challenger", value: `<@${bet.challengerId}>`, inline: true },
       { name: "Accepter", value: accepterLabel, inline: true },
-      { name: "Stake", value: `${formatAmount(BigInt(bet.amount))} mUSDC each`, inline: true },
+      {
+        name: "Stake",
+        value: `${formatAmount(BigInt(bet.amount))} USDC each · ${chainSuffix}`,
+        inline: true,
+      },
       { name: "Status", value: STATUS_LABELS[bet.status] ?? bet.status, inline: false },
     );
 
@@ -85,7 +92,7 @@ export async function updateAnnouncement(client: Client, betId: bigint) {
   if (bet.resolutionTxSig) {
     embed.addFields({
       name: "Tx",
-      value: `[explorer](https://explorer.solana.com/tx/${bet.resolutionTxSig}?cluster=devnet)`,
+      value: `[explorer](${chainExplorerTxUrl(chain, bet.resolutionTxSig)})`,
       inline: true,
     });
   }

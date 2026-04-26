@@ -245,7 +245,7 @@ export async function createRematch(args: {
   parentBetId: bigint;
   initiatorId: string; // must be the original loser
 }): Promise<
-  | { ok: true; betId: bigint; shortcode: string; termsCanonical: string }
+  | { ok: true; betId: bigint; shortcode: string; termsCanonical: string; chain: Chain }
   | { ok: false; reason: string }
 > {
   const parent = await getBet(args.parentBetId);

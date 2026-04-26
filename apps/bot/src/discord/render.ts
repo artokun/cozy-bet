@@ -20,6 +20,8 @@ export function renderBetCard(args: {
   canonical?: string | null;
   status: string;
   shortcode?: string;
+  /** Settlement chain ("solana" | "base"). Shown as the stake suffix. */
+  settlementChain?: "solana" | "base" | null;
   challengerReliability?: string | null;
   accepterReliability?: string | null;
   /** Double-or-Nothing chain. >0 means this is a rematch. */
@@ -49,7 +51,15 @@ export function renderBetCard(args: {
     .addFields(
       { name: "Challenger", value: challengerLabel, inline: true },
       { name: "Accepter", value: accepterLabel, inline: true },
-      { name: "Stake", value: `${args.amount} mUSDC each`, inline: true },
+      {
+        name: "Stake",
+        value:
+          `${args.amount} USDC each` +
+          (args.settlementChain
+            ? ` · ${args.settlementChain === "solana" ? "Solana" : "Base"}`
+            : ""),
+        inline: true,
+      },
       { name: "Status", value: args.status, inline: false },
     )
     .setColor(0x5b8cff);
