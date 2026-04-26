@@ -58,7 +58,7 @@ export const saybet = new SlashCommandBuilder()
   .addNumberOption((o) =>
     o
       .setName("amount")
-      .setDescription("amount in mockUSDC (min 1)")
+      .setDescription("amount in USDC (min 1)")
       .setMinValue(1)
       .setRequired(true),
   )
@@ -73,6 +73,15 @@ export const saybet = new SlashCommandBuilder()
     o
       .setName("user")
       .setDescription("who you want to bet (omit to open to anyone)"),
+  )
+  .addStringOption((o) =>
+    o
+      .setName("chain")
+      .setDescription("settlement chain (default: your preferred chain)")
+      .addChoices(
+        { name: "Solana", value: "solana" },
+        { name: "Base", value: "base" },
+      ),
   );
 
 export const mybets = new SlashCommandBuilder()
@@ -210,6 +219,10 @@ export async function handleSaybet(i: ChatInputCommandInteraction) {
   const target = i.options.getUser("user");
   const amount = i.options.getNumber("amount", true);
   const description = i.options.getString("description", true);
+  const chainOpt = i.options.getString("chain") as
+    | "solana"
+    | "base"
+    | null;
   if (target && target.id === i.user.id) {
     await i.reply({ content: "You can't bet yourself.", ephemeral: true });
     return;
@@ -244,13 +257,16 @@ export async function handleSaybet(i: ChatInputCommandInteraction) {
     amount: dollarsToAtoms(amount),
     description,
     tokenMint: mockUsdcMint.toBase58(),
+    chain: chainOpt ?? undefined,
     challengerTag: i.user.username,
     accepterTag: target?.username,
   });
   if (!proposed.ok) {
-    await i.editReply({
-      content: `Couldn't auto-clarify those terms: \`${proposed.detail}\`. Try rewording the description so the winning condition is unambiguous (who, when, where, how it's verified).`,
-    });
+    const msg =
+      proposed.reason === "no_wallet"
+        ? `${proposed.detail}`
+        : `Couldn't auto-clarify those terms: \`${proposed.detail}\`. Try rewording the description so the winning condition is unambiguous (who, when, where, how it's verified).`;
+    await i.editReply({ content: msg });
     return;
   }
   const { betId, shortcode, termsCanonical } = proposed;

@@ -1,11 +1,27 @@
 import { getDb, users, bets, betEvents, walletLinkSessions, allowlist } from "@cozy-bet/db";
 import { BetStatus, makeShortcode, isShortcode } from "@cozy-bet/shared";
 import { eq, and, or, isNull, sql } from "drizzle-orm";
-import { PublicKey } from "@solana/web3.js";
 import { nanoid } from "nanoid";
 import { env } from "./env.js";
-import { initializeBetOnChain, resolveOnChain, refundOnChain, drawOnChain, fetchBetOnChain } from "./solana.js";
+import {
+  type Chain,
+  chainInitializeBet,
+  chainResolve,
+  chainDraw,
+  chainRefund,
+  chainFetchBet,
+} from "./chain.js";
 import { disambig, termsHashOf } from "./llm.js";
+
+/** Determine the wallet a user has linked on a given chain. Returns null if
+ *  they haven't linked one. */
+function userWalletForChain(
+  user: typeof users.$inferSelect | null,
+  chain: Chain,
+): string | null {
+  if (!user) return null;
+  return chain === "solana" ? user.walletPubkey : user.evmAddress;
+}
 
 function db() {
   return getDb(env.DATABASE_URL);
@@ -40,9 +56,29 @@ export async function getUser(discordId: string) {
 
 export async function setUserWallet(discordId: string, walletPubkey: string) {
   const d = db();
+  // First chain linked becomes the user's preferred chain.
+  const existing = await getUser(discordId);
   await d
     .update(users)
-    .set({ walletPubkey, linkedAt: new Date() })
+    .set({
+      walletPubkey,
+      linkedAt: new Date(),
+      preferredChain: existing?.preferredChain ?? "solana",
+    })
+    .where(eq(users.discordId, discordId));
+}
+
+/** Link an EVM address to a discord user. Mirrors setUserWallet for Base. */
+export async function setUserEvmAddress(discordId: string, evmAddress: string) {
+  const d = db();
+  const existing = await getUser(discordId);
+  await d
+    .update(users)
+    .set({
+      evmAddress,
+      linkedAt: new Date(),
+      preferredChain: existing?.preferredChain ?? "base",
+    })
     .where(eq(users.discordId, discordId));
 }
 
@@ -55,6 +91,9 @@ export async function proposeBet(args: {
   amount: bigint;
   description: string;
   tokenMint: string;
+  /** Settlement chain — locks at creation. Defaults to challenger's
+   *  preferred_chain, falling back to "solana". */
+  chain?: Chain;
   /** Optional deadline timestamp; default = now + 7d. */
   deadline?: Date;
   /** Tags for disambig context (challenger / accepter usernames). Optional. */
@@ -64,11 +103,29 @@ export async function proposeBet(args: {
   parentBetId?: bigint;
   chainDepth?: number;
 }): Promise<
-  | { ok: true; betId: bigint; shortcode: string; termsCanonical: string }
-  | { ok: false; reason: "unresolvable"; detail: string }
+  | { ok: true; betId: bigint; shortcode: string; termsCanonical: string; chain: Chain }
+  | { ok: false; reason: "unresolvable" | "no_wallet"; detail: string }
 > {
   await upsertUser(args.challengerId);
   if (args.accepterId) await upsertUser(args.accepterId);
+
+  // Resolve the settlement chain. Explicit arg wins; otherwise fall back to
+  // the challenger's preferred_chain; then "solana" for legacy users.
+  const challengerUser = await getUser(args.challengerId);
+  const chain: Chain =
+    args.chain ?? (challengerUser?.preferredChain as Chain | null) ?? "solana";
+
+  // Challenger must have a wallet on the chosen chain — otherwise the bet
+  // would be unfundable. We don't gate the accepter (they can link
+  // post-Accept) but they'll hit the same check at initialize_bet time.
+  if (!userWalletForChain(challengerUser, chain)) {
+    const which = chain === "solana" ? "Solana" : "Base";
+    return {
+      ok: false,
+      reason: "no_wallet",
+      detail: `link your ${which} wallet first with /linkwallet (chain: ${chain})`,
+    };
+  }
 
   // Run disambig before creating the bet. If LLM rejects as unresolvable,
   // refuse to create the bet — better to make the user reword than lock
@@ -105,6 +162,7 @@ export async function proposeBet(args: {
         termsCanonical,
         shortcode,
         status: BetStatus.Proposed,
+        chain,
         deadline,
         parentBetId: args.parentBetId ?? null,
         chainDepth: args.chainDepth ?? 0,
@@ -132,9 +190,10 @@ export async function proposeBet(args: {
       disambigKind: disambigResult.kind,
       shortcode,
       deadline: deadline.toISOString(),
+      chain,
     },
   });
-  return { ok: true, betId, shortcode, termsCanonical };
+  return { ok: true, betId, shortcode, termsCanonical, chain };
 }
 
 /** Lookup helper. Accepts either a full numeric bet_id or a shortcode. */
@@ -214,6 +273,7 @@ export async function createRematch(args: {
     amount: newAmount,
     description: parent.description,
     tokenMint: parent.tokenMint,
+    chain: parent.chain as Chain,
     parentBetId: parent.id,
     chainDepth: Number(parent.chainDepth ?? 0) + 1,
   });
@@ -290,10 +350,13 @@ export async function initializeOnChain(betId: bigint) {
   if (!bet) throw new Error("bet not found");
   if (bet.status !== BetStatus.Accepted) throw new Error(`bet is ${bet.status}`);
   if (!bet.accepterId) throw new Error("bet has no accepter yet");
+  const chain = bet.chain as Chain;
   const challenger = await getUser(bet.challengerId);
   const accepter = await getUser(bet.accepterId);
-  if (!challenger?.walletPubkey || !accepter?.walletPubkey) {
-    throw new Error("both users must link their wallets first");
+  const challengerWallet = userWalletForChain(challenger, chain);
+  const accepterWallet = userWalletForChain(accepter, chain);
+  if (!challengerWallet || !accepterWallet) {
+    throw new Error(`both users must link their ${chain} wallets first`);
   }
   // Compute the terms hash from the canonical sentence so the on-chain bet
   // is cryptographically bound to the agreed terms. Falls back to all-zeros
@@ -301,11 +364,11 @@ export async function initializeOnChain(betId: bigint) {
   const termsHash = bet.termsCanonical
     ? Array.from(termsHashOf(bet.termsCanonical))
     : null;
-  const { sig, betPda, vaultPda } = await initializeBetOnChain({
+  const { sig, betPda, vaultPda } = await chainInitializeBet(chain, {
     betId,
     amount: BigInt(bet.amount),
-    challenger: new PublicKey(challenger.walletPubkey),
-    accepter: new PublicKey(accepter.walletPubkey),
+    challenger: challengerWallet,
+    accepter: accepterWallet,
     termsHash,
   });
   const d = db();
@@ -313,15 +376,15 @@ export async function initializeOnChain(betId: bigint) {
     .update(bets)
     .set({
       status: BetStatus.Pending,
-      betPda: betPda.toBase58(),
-      vaultPda: vaultPda.toBase58(),
+      betPda: betPda ?? null,
+      vaultPda: vaultPda ?? null,
       initTxSig: sig,
     })
     .where(eq(bets.id, betId));
   await d.insert(betEvents).values({
     betId,
     eventType: "initialized",
-    payload: { sig, betPda: betPda.toBase58() },
+    payload: { sig, betPda: betPda ?? null, chain },
   });
   return { sig, betPda, vaultPda };
 }
@@ -339,7 +402,7 @@ export async function recordDeposit(
   const bet = await getBet(betId);
   if (!bet) throw new Error("bet not found");
 
-  const onChain = await fetchBetOnChain(betId);
+  const onChain = await chainFetchBet(bet.chain as Chain, betId);
   if (!onChain) throw new Error("on-chain bet not found");
 
   const patch: Partial<typeof bets.$inferInsert> = {
@@ -347,7 +410,7 @@ export async function recordDeposit(
     accepterDeposited: onChain.accepterDeposited,
   };
   const wasNotFunded = bet.status !== BetStatus.Funded;
-  const isNowFunded = "funded" in onChain.status;
+  const isNowFunded = onChain.status === "funded";
   if (wasNotFunded && isNowFunded) {
     patch.status = BetStatus.Funded;
     patch.fundedAt = new Date();
@@ -384,7 +447,7 @@ export async function reconcileBet(betId: bigint) {
   const d = db();
   const bet = await getBet(betId);
   if (!bet) throw new Error("bet not found");
-  const onChain = await fetchBetOnChain(betId);
+  const onChain = await chainFetchBet(bet.chain as Chain, betId);
   if (!onChain) return { changed: false, reason: "no on-chain state yet" };
 
   const patch: Partial<typeof bets.$inferInsert> = {};
@@ -394,17 +457,17 @@ export async function reconcileBet(betId: bigint) {
   if (bet.accepterDeposited !== onChain.accepterDeposited) {
     patch.accepterDeposited = onChain.accepterDeposited;
   }
-  // Map on-chain enum to DB enum
+  // Map on-chain status to DB enum
   const onChainStatus =
-    "pending" in onChain.status
+    onChain.status === "pending"
       ? BetStatus.Pending
-      : "funded" in onChain.status
+      : onChain.status === "funded"
         ? BetStatus.Funded
-        : "resolved" in onChain.status
+        : onChain.status === "resolved"
           ? BetStatus.Resolved
-          : "drawn" in onChain.status
+          : onChain.status === "drawn"
             ? BetStatus.Drawn
-            : "refunded" in onChain.status
+            : onChain.status === "refunded"
               ? BetStatus.Refunded
               : null;
   if (
@@ -535,15 +598,18 @@ async function finalizeDraw(betId: bigint) {
   const bet = await getBet(betId);
   if (!bet) throw new Error("bet not found");
   if (!bet.accepterId) throw new Error("bet has no accepter");
+  const chain = bet.chain as Chain;
   const challenger = await getUser(bet.challengerId);
   const accepter = await getUser(bet.accepterId);
-  if (!challenger?.walletPubkey || !accepter?.walletPubkey) {
+  const challengerWallet = userWalletForChain(challenger, chain);
+  const accepterWallet = userWalletForChain(accepter, chain);
+  if (!challengerWallet || !accepterWallet) {
     throw new Error("participant wallets missing");
   }
-  const sig = await drawOnChain({
+  const sig = await chainDraw(chain, {
     betId,
-    challenger: new PublicKey(challenger.walletPubkey),
-    accepter: new PublicKey(accepter.walletPubkey),
+    challenger: challengerWallet,
+    accepter: accepterWallet,
   });
   await d
     .update(bets)
@@ -566,12 +632,16 @@ async function finalizeResolve(betId: bigint, winnerDiscordId: string) {
   const d = db();
   const bet = await getBet(betId);
   if (!bet) throw new Error("bet not found");
+  const chain = bet.chain as Chain;
   const winner = await getUser(winnerDiscordId);
-  if (!winner?.walletPubkey) throw new Error("winner has no linked wallet");
+  const winnerWallet = userWalletForChain(winner, chain);
+  if (!winnerWallet) {
+    throw new Error(`winner has no linked ${chain} wallet`);
+  }
 
-  const sig = await resolveOnChain({
+  const sig = await chainResolve(chain, {
     betId,
-    winner: new PublicKey(winner.walletPubkey),
+    winner: winnerWallet,
   });
   await d
     .update(bets)
@@ -942,15 +1012,18 @@ export async function refundBet(betId: bigint) {
     throw new Error(`bet is ${bet.status}, cannot refund`);
   }
   if (!bet.accepterId) throw new Error("bet has no accepter");
+  const chain = bet.chain as Chain;
   const challenger = await getUser(bet.challengerId);
   const accepter = await getUser(bet.accepterId);
-  if (!challenger?.walletPubkey || !accepter?.walletPubkey) {
+  const challengerWallet = userWalletForChain(challenger, chain);
+  const accepterWallet = userWalletForChain(accepter, chain);
+  if (!challengerWallet || !accepterWallet) {
     throw new Error("participant wallets missing");
   }
-  const sig = await refundOnChain({
+  const sig = await chainRefund(chain, {
     betId,
-    challenger: new PublicKey(challenger.walletPubkey),
-    accepter: new PublicKey(accepter.walletPubkey),
+    challenger: challengerWallet,
+    accepter: accepterWallet,
   });
   await d
     .update(bets)
