@@ -318,5 +318,28 @@ export function explorerTxUrl(sig: string): string {
   return `${base}/tx/${sig}`;
 }
 
+const ERC20_BALANCE_ABI = [
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{ name: "owner", type: "address" }],
+    outputs: [{ type: "uint256" }],
+  },
+] as const;
+
+/** Read the USDC balance of a Base address. Returns null if the EVM adapter
+ *  isn't configured (no env vars). */
+export async function fetchUsdcBalance(owner: Address): Promise<bigint | null> {
+  if (!isConfigured) return null;
+  const result = (await publicClient().readContract({
+    address: USDC_ADDRESS as Address,
+    abi: ERC20_BALANCE_ABI,
+    functionName: "balanceOf",
+    args: [owner],
+  })) as bigint;
+  return result;
+}
+
 export const treasuryOwners = TREASURY_OWNERS;
 export { CHAIN as evmChain };

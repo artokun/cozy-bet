@@ -38,6 +38,7 @@ import {
 } from "../flows.js";
 import { isAdmin } from "../env.js";
 import { connection, mockUsdcMint } from "../solana.js";
+import * as evm from "../evm.js";
 import { safeChannelSend, updateAnnouncement } from "./announce.js";
 import { PublicKey } from "@solana/web3.js";
 import {
@@ -178,7 +179,7 @@ export const helpCmd = new SlashCommandBuilder()
 
 export const balanceCmd = new SlashCommandBuilder()
   .setName("balance")
-  .setDescription("Show your mUSDC balance");
+  .setDescription("Show your USDC balance on each linked chain");
 
 export const statusCmd = new SlashCommandBuilder()
   .setName("status")
@@ -849,34 +850,69 @@ export async function handleHelp(i: ChatInputCommandInteraction) {
 
 export async function handleBalance(i: ChatInputCommandInteraction) {
   const user = await getUser(i.user.id);
-  if (!user?.walletPubkey) {
+  if (!user?.walletPubkey && !user?.evmAddress) {
     await i.reply({
-      content: "You haven't linked a wallet yet. Run `/linkwallet`.",
+      content:
+        "You haven't linked any wallet yet. Run `/linkwallet` (Solana or Base).",
       ephemeral: true,
     });
     return;
   }
-  const owner = new PublicKey(user.walletPubkey);
-  const ata = getAssociatedTokenAddressSync(mockUsdcMint, owner);
-  let amountAtoms = 0n;
-  try {
-    const acc = await getAccount(connection, ata);
-    amountAtoms = acc.amount;
-  } catch (e) {
-    if (!(e instanceof TokenAccountNotFoundError)) {
-      await i.reply({
-        content: `Error fetching balance: ${(e as Error)?.message ?? e}`,
-        ephemeral: true,
-      });
-      return;
+  await i.deferReply({ ephemeral: true });
+
+  const lines: string[] = [];
+
+  if (user.walletPubkey) {
+    try {
+      const owner = new PublicKey(user.walletPubkey);
+      const ata = getAssociatedTokenAddressSync(mockUsdcMint, owner);
+      let usdcAtoms = 0n;
+      try {
+        const acc = await getAccount(connection, ata);
+        usdcAtoms = acc.amount;
+      } catch (e) {
+        if (!(e instanceof TokenAccountNotFoundError)) throw e;
+      }
+      const usdc = (Number(usdcAtoms) / 1e6).toFixed(2);
+      const sol = await connection.getBalance(owner);
+      lines.push(
+        `**Solana** \`${user.walletPubkey}\``,
+        `· mUSDC: **${usdc}** · SOL: ${(sol / 1e9).toFixed(4)}`,
+      );
+    } catch (e: unknown) {
+      lines.push(
+        `**Solana** \`${user.walletPubkey}\``,
+        `· _(error: ${e instanceof Error ? e.message : String(e)})_`,
+      );
     }
   }
-  const amount = (Number(amountAtoms) / 1e6).toFixed(2);
-  const sol = await connection.getBalance(owner);
-  await i.reply({
-    content: `Wallet: \`${user.walletPubkey}\`\nmUSDC: **${amount}**\nSOL: ${(sol / 1e9).toFixed(4)}`,
-    ephemeral: true,
-  });
+
+  if (user.evmAddress) {
+    try {
+      const usdcAtoms = await evm.fetchUsdcBalance(
+        user.evmAddress as `0x${string}`,
+      );
+      if (usdcAtoms === null) {
+        lines.push(
+          `**Base** \`${user.evmAddress}\``,
+          `· _(EVM adapter not configured)_`,
+        );
+      } else {
+        const usdc = (Number(usdcAtoms) / 1e6).toFixed(2);
+        lines.push(
+          `**Base** \`${user.evmAddress}\``,
+          `· USDC: **${usdc}**`,
+        );
+      }
+    } catch (e: unknown) {
+      lines.push(
+        `**Base** \`${user.evmAddress}\``,
+        `· _(error: ${e instanceof Error ? e.message : String(e)})_`,
+      );
+    }
+  }
+
+  await i.editReply({ content: lines.join("\n") });
 }
 
 export async function handleLinkWallet(i: ChatInputCommandInteraction) {
