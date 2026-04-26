@@ -7,7 +7,15 @@ const nextConfig = {
   },
   webpack: (config) => {
     config.externals = [...(config.externals || []), "pino-pretty", "lokijs", "encoding"];
-    config.resolve.fallback = { ...(config.resolve.fallback || {}), fs: false, net: false, tls: false };
+    // wagmi 3.4.x dynamically `import('accounts')` from its Tempo wallet
+    // connector (we don't use it). Stub it so the bundler doesn't choke.
+    config.resolve.fallback = {
+      ...(config.resolve.fallback || {}),
+      fs: false,
+      net: false,
+      tls: false,
+      accounts: false,
+    };
     return config;
   },
 };

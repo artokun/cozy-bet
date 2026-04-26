@@ -6,7 +6,10 @@ import {
   SolflareWalletAdapter,
 } from "@solana/wallet-adapter-wallets";
 import { clusterApiUrl } from "@solana/web3.js";
-import { useMemo } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { WagmiProvider } from "wagmi";
+import { wagmiConfig } from "../lib/wagmiConfig";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const endpoint =
@@ -15,11 +18,16 @@ export function Providers({ children }: { children: React.ReactNode }) {
     () => [new SolflareWalletAdapter(), new PhantomWalletAdapter()],
     [],
   );
+  const [queryClient] = useState(() => new QueryClient());
   return (
-    <ConnectionProvider endpoint={endpoint}>
-      <WalletProvider wallets={wallets} autoConnect>
-        <WalletModalProvider>{children}</WalletModalProvider>
-      </WalletProvider>
-    </ConnectionProvider>
+    <WagmiProvider config={wagmiConfig}>
+      <QueryClientProvider client={queryClient}>
+        <ConnectionProvider endpoint={endpoint}>
+          <WalletProvider wallets={wallets} autoConnect>
+            <WalletModalProvider>{children}</WalletModalProvider>
+          </WalletProvider>
+        </ConnectionProvider>
+      </QueryClientProvider>
+    </WagmiProvider>
   );
 }

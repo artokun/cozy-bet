@@ -11,14 +11,18 @@ export type WalletLinkSession = {
   used: boolean;
 };
 
+export type Chain = "solana" | "base";
+
 export type BetDetail = {
   id: string; // bigint serialized
+  chain: Chain;
   status: string;
   amount: string; // bigint serialized
   tokenMint: string;
   description: string;
   challenger: { discordId: string; wallet: string | null };
-  accepter: { discordId: string; wallet: string | null };
+  accepter: { discordId: string; wallet: string | null } | null;
+  isOpen: boolean;
   betPda: string | null;
   vaultPda: string | null;
   challengerDeposited: boolean;
@@ -33,12 +37,23 @@ export async function fetchSession(nonce: string): Promise<WalletLinkSession> {
   return r.json();
 }
 
-export async function confirmLink(body: {
-  nonce: string;
-  walletPubkey: string;
-  signatureB58: string;
-  message: string;
-}): Promise<{ ok: true } | { ok: false; error: string }> {
+export async function confirmLink(
+  body:
+    | {
+        chain?: "solana";
+        nonce: string;
+        walletPubkey: string;
+        signatureB58: string;
+        message: string;
+      }
+    | {
+        chain: "base";
+        nonce: string;
+        address: string;
+        signatureHex: string;
+        message: string;
+      },
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const r = await fetch(`${BOT_API_URL}/api/wallet-link/confirm`, {
     method: "POST",
     headers: { "content-type": "application/json" },

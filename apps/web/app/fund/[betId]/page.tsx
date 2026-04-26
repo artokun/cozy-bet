@@ -38,7 +38,7 @@ export default function FundPage({
     if (!publicKey || !bet) return null;
     const me = publicKey.toBase58();
     if (bet.challenger.wallet === me) return "challenger" as const;
-    if (bet.accepter.wallet === me) return "accepter" as const;
+    if (bet.accepter?.wallet === me) return "accepter" as const;
     return "stranger" as const;
   }, [publicKey, bet]);
 
@@ -132,7 +132,9 @@ export default function FundPage({
         <div className="row">
           <span className="muted">Accepter</span>
           <code>
-            {bet.accepter.wallet?.slice(0, 6)}…{bet.accepter.wallet?.slice(-4)}
+            {bet.accepter?.wallet
+              ? `${bet.accepter.wallet.slice(0, 6)}…${bet.accepter.wallet.slice(-4)}`
+              : "(open — no accepter yet)"}
           </code>
         </div>
         <div className="row">
