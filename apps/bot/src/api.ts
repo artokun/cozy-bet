@@ -2,10 +2,11 @@ import express from "express";
 import nacl from "tweetnacl";
 import bs58 from "bs58";
 import { PublicKey } from "@solana/web3.js";
+import { verifyMessage, getAddress, isAddress } from "viem";
 import { eq, sql } from "drizzle-orm";
 import { getDb, walletLinkSessions, bets, users } from "@cozy-bet/db";
 import { env, allowedGuilds } from "./env.js";
-import { recordDeposit, setUserWallet } from "./flows.js";
+import { recordDeposit, setUserWallet, setUserEvmAddress } from "./flows.js";
 import { updateAnnouncement } from "./discord/announce.js";
 import type { Client } from "discord.js";
 
@@ -41,8 +42,13 @@ export function startApi(client: Client) {
   });
 
   app.post("/api/wallet-link/confirm", async (req, res) => {
-    const { nonce, walletPubkey, signatureB58, message } = req.body ?? {};
-    if (!nonce || !walletPubkey || !signatureB58 || !message) {
+    // Accept either a Solana ({walletPubkey, signatureB58}) payload or an
+    // EVM ({chain:"base", address, signatureHex}) payload. Field "message"
+    // is the same shape in both cases.
+    const body = req.body ?? {};
+    const chain: "solana" | "base" = body.chain === "base" ? "base" : "solana";
+    const { nonce, message } = body;
+    if (!nonce || !message) {
       return res.json({ ok: false, error: "missing fields" });
     }
     const d = getDb(env.DATABASE_URL);
@@ -60,16 +66,37 @@ export function startApi(client: Client) {
     const expected = `cozy-bet link: ${session.nonce} for discord:${session.discordId}`;
     if (message !== expected) return res.json({ ok: false, error: "message mismatch" });
 
-    const pk = new PublicKey(walletPubkey);
-    const sig = bs58.decode(signatureB58);
-    const ok = nacl.sign.detached.verify(
-      new TextEncoder().encode(message),
-      sig,
-      pk.toBytes(),
-    );
-    if (!ok) return res.json({ ok: false, error: "bad signature" });
+    let resolvedAddress: string;
+    if (chain === "solana") {
+      const { walletPubkey, signatureB58 } = body;
+      if (!walletPubkey || !signatureB58) {
+        return res.json({ ok: false, error: "missing fields" });
+      }
+      const pk = new PublicKey(walletPubkey);
+      const sig = bs58.decode(signatureB58);
+      const ok = nacl.sign.detached.verify(
+        new TextEncoder().encode(message),
+        sig,
+        pk.toBytes(),
+      );
+      if (!ok) return res.json({ ok: false, error: "bad signature" });
+      resolvedAddress = walletPubkey;
+      await setUserWallet(session.discordId, walletPubkey);
+    } else {
+      const { address, signatureHex } = body;
+      if (!address || !signatureHex || !isAddress(address)) {
+        return res.json({ ok: false, error: "missing fields" });
+      }
+      const ok = await verifyMessage({
+        address: getAddress(address),
+        message,
+        signature: signatureHex as `0x${string}`,
+      });
+      if (!ok) return res.json({ ok: false, error: "bad signature" });
+      resolvedAddress = getAddress(address);
+      await setUserEvmAddress(session.discordId, resolvedAddress);
+    }
 
-    await setUserWallet(session.discordId, walletPubkey);
     await d
       .update(walletLinkSessions)
       .set({ usedAt: new Date() })
@@ -77,7 +104,8 @@ export function startApi(client: Client) {
 
     try {
       const u = await client.users.fetch(session.discordId);
-      await u.send(`✅ Wallet linked: \`${walletPubkey}\``);
+      const which = chain === "solana" ? "Solana" : "Base";
+      await u.send(`✅ ${which} wallet linked: \`${resolvedAddress}\``);
     } catch {}
     res.json({ ok: true });
   });
@@ -129,20 +157,25 @@ export function startApi(client: Client) {
     const accepter = bet.accepterId
       ? (await d.select().from(users).where(eq(users.discordId, bet.accepterId)))[0]
       : null;
+    const walletFor = (u: typeof users.$inferSelect | null | undefined) => {
+      if (!u) return null;
+      return bet.chain === "solana" ? u.walletPubkey : u.evmAddress;
+    };
     res.json({
       id: bet.id.toString(),
+      chain: bet.chain,
       status: bet.status,
       amount: bet.amount.toString(),
       tokenMint: bet.tokenMint,
       description: bet.description,
       challenger: {
         discordId: bet.challengerId,
-        wallet: challenger?.walletPubkey ?? null,
+        wallet: walletFor(challenger),
       },
       accepter: bet.accepterId
         ? {
             discordId: bet.accepterId,
-            wallet: accepter?.walletPubkey ?? null,
+            wallet: walletFor(accepter),
           }
         : null,
       isOpen: bet.isOpen,

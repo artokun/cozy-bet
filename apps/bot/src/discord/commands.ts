@@ -133,7 +133,16 @@ export const counterCmd = new SlashCommandBuilder()
 
 export const linkwallet = new SlashCommandBuilder()
   .setName("linkwallet")
-  .setDescription("Link your Solana wallet to your Discord account");
+  .setDescription("Link a wallet to your Discord account")
+  .addStringOption((o) =>
+    o
+      .setName("chain")
+      .setDescription("which chain (default: Solana)")
+      .addChoices(
+        { name: "Solana", value: "solana" },
+        { name: "Base", value: "base" },
+      ),
+  );
 
 export const adminresolve = new SlashCommandBuilder()
   .setName("adminresolve")
@@ -792,9 +801,9 @@ export async function handleHelp(i: ChatInputCommandInteraction) {
       "**cozy-bet** — bridging online larps with real stakes.",
       "",
       "**Flow**",
-      "1. `/linkwallet` — link your Solana wallet (one-time).",
-      "2. `/saybet @user <amount> <description>` — challenge someone. Omit `@user` to leave it open for anyone.",
-      "3. They click Accept. Both get a DM link to deposit mUSDC.",
+      "1. `/linkwallet [chain]` — link your Solana or Base wallet (one-time per chain).",
+      "2. `/saybet @user <amount> <description> [chain]` — challenge someone. Omit `@user` to leave it open for anyone. Defaults to your preferred chain.",
+      "3. They click Accept. Both get a DM link to deposit USDC.",
       "4. Once both deposit, bet's locked. Decide the winner with `/resolve`. Or `/draw` if you both agree it's a tie.",
       "5. When both sides match on the same winner, the contract pays out on-chain.",
       "",
@@ -860,16 +869,23 @@ export async function handleBalance(i: ChatInputCommandInteraction) {
 }
 
 export async function handleLinkWallet(i: ChatInputCommandInteraction) {
+  const chain = (i.options.getString("chain") as "solana" | "base" | null) ??
+    "solana";
   const existing = await getUser(i.user.id);
-  if (existing?.walletPubkey) {
+  const already =
+    chain === "solana" ? existing?.walletPubkey : existing?.evmAddress;
+  if (already) {
     await i.reply({
-      content: `Already linked to \`${existing.walletPubkey}\`. Re-linking will overwrite.`,
+      content: `Already linked your ${chain === "solana" ? "Solana" : "Base"} wallet to \`${already}\`. Re-linking will overwrite.`,
       ephemeral: true,
     });
   }
-  const { url } = await createWalletLinkSession(i.user.id);
+  const { url: baseUrl } = await createWalletLinkSession(i.user.id);
+  // Append chain so the web app knows whether to render Phantom or
+  // wagmi/Coinbase Smart Wallet on the link page.
+  const url = `${baseUrl}?chain=${chain}`;
   await i.reply({
-    content: `Open this to link your wallet (expires in 15 min): ${url}`,
+    content: `Open this to link your **${chain === "solana" ? "Solana" : "Base"}** wallet (expires in 15 min): ${url}`,
     ephemeral: true,
   });
 }
@@ -913,29 +929,34 @@ export async function handleAccept(i: ButtonInteraction, betId: bigint) {
     });
   }
 
-  // Ensure both wallets are linked; if not, send link prompts.
+  // Ensure both participants have a wallet on the bet's chain. If not, DM
+  // them a chain-tagged link.
+  const chain = refreshed.chain as "solana" | "base";
+  const chainLabel = chain === "solana" ? "Solana" : "Base";
+  const walletOf = (u: { walletPubkey?: string | null; evmAddress?: string | null } | null) =>
+    chain === "solana" ? u?.walletPubkey : u?.evmAddress;
   const challenger = await getUser(refreshed.challengerId);
   const accepter = await getUser(refreshed.accepterId);
-  if (!challenger?.walletPubkey) {
+  if (!walletOf(challenger ?? null)) {
     const { url } = await createWalletLinkSession(refreshed.challengerId);
     try {
       const u = await i.client.users.fetch(refreshed.challengerId);
-      await u.send(`Link your wallet to fund your bet: ${url}`);
+      await u.send(`Link your ${chainLabel} wallet to fund your bet: ${url}?chain=${chain}`);
     } catch {}
   }
-  if (!accepter?.walletPubkey) {
+  if (!walletOf(accepter ?? null)) {
     const { url } = await createWalletLinkSession(refreshed.accepterId);
     try {
-      await i.user.send(`Link your wallet to fund your bet: ${url}`);
+      await i.user.send(`Link your ${chainLabel} wallet to fund your bet: ${url}?chain=${chain}`);
     } catch {}
   }
 
   await acceptBet(betId, i.user.id);
 
-  // If both wallets are linked, initialize on-chain + send fund links.
+  // If both wallets are linked on this chain, initialize + send fund links.
   const c2 = await getUser(refreshed.challengerId);
   const a2 = await getUser(refreshed.accepterId);
-  if (c2?.walletPubkey && a2?.walletPubkey) {
+  if (walletOf(c2 ?? null) && walletOf(a2 ?? null)) {
     try {
       await initializeOnChain(betId);
       await sendFundLinks(i, betId);
