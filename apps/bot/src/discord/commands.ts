@@ -36,6 +36,7 @@ import {
   leaderboardData,
   listActiveBetsFor,
   listArbiterEvidence,
+  listOpenBetsForGuild,
   proposeBet,
   proposeCounter,
   reconcileBet,
@@ -99,6 +100,10 @@ export const saybet = new SlashCommandBuilder()
 export const mybets = new SlashCommandBuilder()
   .setName("mybets")
   .setDescription("List your active bets");
+
+export const openBetsCmd = new SlashCommandBuilder()
+  .setName("open-bets")
+  .setDescription("List unclaimed open bets in this server (anyone can accept)");
 
 export const resolveCmd = new SlashCommandBuilder()
   .setName("resolve")
@@ -258,6 +263,7 @@ export const leaderboardCmd = new SlashCommandBuilder()
 export const commandDefinitions: RESTPostAPIApplicationCommandsJSONBody[] = [
   saybet.toJSON(),
   mybets.toJSON(),
+  openBetsCmd.toJSON(),
   resolveCmd.toJSON(),
   drawCmd.toJSON(),
   counterCmd.toJSON(),
@@ -378,6 +384,38 @@ export async function handleMyBets(i: ChatInputCommandInteraction) {
   const lines = rows.map(formatBet);
   await i.reply({
     content: `Your active bets:\n${lines.join("\n")}`,
+    ephemeral: true,
+  });
+}
+
+export async function handleOpenBets(i: ChatInputCommandInteraction) {
+  if (!i.guildId) {
+    await i.reply({ content: "Use this in a server, not DMs.", ephemeral: true });
+    return;
+  }
+  const rows = await listOpenBetsForGuild(i.guildId, 10);
+  if (rows.length === 0) {
+    await i.reply({
+      content:
+        "No open bets here. Start one with `/saybet` and omit the user option to leave it open for anyone.",
+      ephemeral: true,
+    });
+    return;
+  }
+  const lines = rows.map((b) => {
+    const stake = formatAmount(BigInt(b.amount));
+    const chainLabel = b.chain === "solana" ? "Solana" : "Base";
+    const link = `https://discord.com/channels/${i.guildId}/${b.channelId}/${b.announceMessageId ?? ""}`;
+    const deadline = b.deadline
+      ? `<t:${Math.floor(new Date(b.deadline).getTime() / 1000)}:R>`
+      : "no deadline";
+    return [
+      `• [\`${b.shortcode}\`](${link}) — **${stake} USDC** (${chainLabel}) — by <@${b.challengerId}> — settles ${deadline}`,
+      `   _${b.description.length > 120 ? b.description.slice(0, 117) + "…" : b.description}_`,
+    ].join("\n");
+  });
+  await i.reply({
+    content: `**Open bets here** (${rows.length} of up to 10):\n${lines.join("\n")}`,
     ephemeral: true,
   });
 }
@@ -1099,6 +1137,7 @@ export async function handleHelp(i: ChatInputCommandInteraction) {
       "**Info commands**",
       "• `/status <bet_id>` — full detail on a bet",
       "• `/mybets` — your active bets",
+      "• `/open-bets` — unclaimed open bets in this server (anyone can take)",
       "• `/leaderboard [by:won|wagered|winrate]` — server leaderboard",
       "• `/balance` — your wallet + mUSDC balance",
       "• `/linkwallet` — link or relink",

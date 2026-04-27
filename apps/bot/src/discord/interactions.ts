@@ -24,6 +24,7 @@ import {
   handleLeaderboard,
   handleLinkWallet,
   handleMyBets,
+  handleOpenBets,
   handlePreviewTerms,
   handleReconcile,
   handleRequestArbiter,
@@ -38,6 +39,8 @@ export async function routeSlash(i: ChatInputCommandInteraction) {
       return handleSaybet(i);
     case "mybets":
       return handleMyBets(i);
+    case "open-bets":
+      return handleOpenBets(i);
     case "resolve":
       return handleResolve(i);
     case "draw":

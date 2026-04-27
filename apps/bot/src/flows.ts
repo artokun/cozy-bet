@@ -978,6 +978,30 @@ export async function agreeCancel(betId: bigint, agreerId: string) {
   return { sig };
 }
 
+/** List unclaimed open bets in a guild, newest first. Used by /open-bets to
+ *  surface bets that don't have a specified accepter yet so they don't have
+ *  to be discovered via channel scrollback. */
+export async function listOpenBetsForGuild(
+  guildId: string,
+  limit = 10,
+) {
+  const d = db();
+  const rows = await d
+    .select()
+    .from(bets)
+    .where(
+      and(
+        eq(bets.guildId, guildId),
+        eq(bets.isOpen, true),
+        isNull(bets.accepterId),
+        eq(bets.status, BetStatus.Proposed),
+      ),
+    )
+    .orderBy(sql`${bets.createdAt} DESC`)
+    .limit(limit);
+  return rows;
+}
+
 /** Winner chooses a dunk GIF post-resolution. Records URL + posted-at on the
  *  bet so we don't re-post and can show it in the explorer. Returns the
  *  loser's discord id so the caller can render the channel embed. */
