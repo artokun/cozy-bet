@@ -10,6 +10,9 @@
     "./idl": "./src/idl.json",
     "./idl-types": "./src/idl-types.ts"
   },
+  "scripts": {
+    "test": "node --import tsx --test 'src/**/*.test.ts'"
+  },
   "dependencies": {
     "@coral-xyz/anchor": "^0.31.1",
     "@solana/web3.js": "^1.95.3",

@@ -23,7 +23,8 @@
     "ops:rotate-admin": "tsx scripts/rotate-admin.ts",
     "test:bot": "pnpm --filter @cozy-bet/bot test",
     "test:web": "pnpm --filter @cozy-bet/web test",
-    "test": "pnpm test:bot && pnpm test:web"
+    "test:shared": "pnpm --filter @cozy-bet/shared test",
+    "test": "pnpm test:shared && pnpm test:bot && pnpm test:web"
   },
   "devDependencies": {
     "@coinbase/cdp-sdk": "^1.48.2",
