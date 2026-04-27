@@ -76,6 +76,12 @@ const schema = z.object({
     .default("true")
     .transform((v) => v === "true"),
 
+  /** Shared secret gating the read-only admin dashboard endpoints
+   *  (e.g. /api/admin/arbiter-cases). Optional — if unset, admin
+   *  endpoints return 503 "admin api disabled". When set, the web
+   *  page prompts admins for the token. Discord-OAuth gating
+   *  (cozy-bet-xw5) supersedes this once it lands. */
+  ADMIN_API_TOKEN: z.string().optional(),
   /** X (Twitter) bearer token for /share verification. Optional; if unset
    *  the /confirm-share command rejects with a "verification disabled" msg
    *  rather than trusting the user's submitted URL. */

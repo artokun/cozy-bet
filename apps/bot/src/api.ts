@@ -3,8 +3,14 @@ import nacl from "tweetnacl";
 import bs58 from "bs58";
 import { PublicKey } from "@solana/web3.js";
 import { verifyMessage, getAddress, isAddress } from "viem";
-import { eq, sql } from "drizzle-orm";
-import { getDb, walletLinkSessions, bets, users } from "@cozy-bet/db";
+import { and, eq, sql } from "drizzle-orm";
+import {
+  getDb,
+  walletLinkSessions,
+  bets,
+  betEvents,
+  users,
+} from "@cozy-bet/db";
 import { env, allowedGuilds } from "./env.js";
 import { recordDeposit, setUserWallet, setUserEvmAddress } from "./flows.js";
 import { updateAnnouncement } from "./discord/announce.js";
@@ -13,6 +19,28 @@ import type { Client } from "discord.js";
 export function startApi(client: Client) {
   const app = express();
   app.use(express.json());
+
+  // Permissive CORS — the bot's API is small + read-mostly, and the web app
+  // (link / fund / admin pages) is the only documented browser caller. We
+  // allow any Origin and reflect it back so browsers don't block the
+  // Authorization header on /api/admin/arbiter-cases.
+  app.use((req, res, next) => {
+    const origin = req.headers.origin ?? "*";
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+    res.setHeader(
+      "Access-Control-Allow-Methods",
+      "GET, POST, OPTIONS",
+    );
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization",
+    );
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(204);
+    }
+    next();
+  });
 
   app.get("/health", (_req, res) => res.json({ ok: true }));
 
@@ -205,6 +233,85 @@ export function startApi(client: Client) {
     } catch (e: any) {
       res.json({ ok: false, error: e?.message ?? String(e) });
     }
+  });
+
+  /**
+   * Admin: list arbiter cases (open + recently closed). Read-only.
+   *
+   * Auth: `Authorization: Bearer ${ADMIN_API_TOKEN}` header. If the token
+   * env is unset, returns 503 so the web page can show a clear "admin
+   * disabled" message rather than 401 (which would imply auth was tried).
+   *
+   * Returns: array of cases with the bet snapshot, the requester +
+   * (if any) claiming admin, plus all evidence events (text + attachments
+   * + author + timestamp). Web /admin/arbiter-cases renders this.
+   */
+  app.get("/api/admin/arbiter-cases", async (req, res) => {
+    if (!env.ADMIN_API_TOKEN) {
+      return res
+        .status(503)
+        .json({ error: "admin api disabled (set ADMIN_API_TOKEN to enable)" });
+    }
+    const auth = req.header("authorization") ?? "";
+    if (auth !== `Bearer ${env.ADMIN_API_TOKEN}`) {
+      return res.status(401).json({ error: "unauthorized" });
+    }
+    const d = getDb(env.DATABASE_URL);
+    const cases = await d
+      .select()
+      .from(bets)
+      .where(sql`${bets.arbiterRequestedAt} IS NOT NULL`)
+      .orderBy(sql`${bets.arbiterRequestedAt} DESC`)
+      .limit(100);
+    const out = await Promise.all(
+      cases.map(async (b) => {
+        const evidence = await d
+          .select()
+          .from(betEvents)
+          .where(
+            and(
+              eq(betEvents.betId, b.id),
+              eq(betEvents.eventType, "arbiter_evidence"),
+            ),
+          )
+          .orderBy(betEvents.createdAt);
+        return {
+          id: b.id.toString(),
+          chain: b.chain,
+          shortcode: b.shortcode,
+          status: b.status,
+          amount: b.amount.toString(),
+          description: b.description,
+          termsCanonical: b.termsCanonical,
+          challengerId: b.challengerId,
+          accepterId: b.accepterId,
+          challengerClaimsWinner: b.challengerClaimsWinner,
+          accepterClaimsWinner: b.accepterClaimsWinner,
+          arbiterRequestedAt: b.arbiterRequestedAt?.toISOString() ?? null,
+          arbiterRequestedBy: b.arbiterRequestedBy,
+          arbiterDiscordId: b.arbiterDiscordId,
+          guildId: b.guildId,
+          channelId: b.channelId,
+          announceMessageId: b.announceMessageId,
+          winnerId: b.winnerId,
+          resolutionTxSig: b.resolutionTxSig,
+          resolvedAt: b.resolvedAt?.toISOString() ?? null,
+          evidence: evidence.map((ev) => {
+            const payload = (ev.payload ?? {}) as {
+              text?: string;
+              attachments?: string[];
+            };
+            return {
+              actorDiscordId: ev.actorDiscordId,
+              text: payload.text ?? "",
+              attachments: payload.attachments ?? [],
+              createdAt: ev.createdAt.toISOString(),
+            };
+          }),
+        };
+      }),
+    );
+    res.json({ cases: out });
   });
 
   return app.listen(env.BOT_API_PORT, () => {
