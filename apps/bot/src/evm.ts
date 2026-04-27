@@ -66,93 +66,10 @@ export const resolverAddress: Address | null = RESOLVER_PRIVATE_KEY
   ? privateKeyToAccount(RESOLVER_PRIVATE_KEY as Hex).address
   : null;
 
-// ----------------------------------------------------------
-// CozyBetEscrow ABI — minimal subset the bot calls
-// ----------------------------------------------------------
-
-const ESCROW_ABI = [
-  {
-    type: "function",
-    name: "initializeBet",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "betId", type: "uint256" },
-      { name: "amount", type: "uint256" },
-      { name: "challenger", type: "address" },
-      { name: "accepter", type: "address" },
-      { name: "termsHash", type: "bytes32" },
-    ],
-    outputs: [],
-  },
-  {
-    type: "function",
-    name: "resolve",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "betId", type: "uint256" },
-      { name: "winner", type: "address" },
-    ],
-    outputs: [],
-  },
-  {
-    type: "function",
-    name: "arbiterResolve",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "betId", type: "uint256" },
-      { name: "winner", type: "address" },
-    ],
-    outputs: [],
-  },
-  {
-    type: "function",
-    name: "draw",
-    stateMutability: "nonpayable",
-    inputs: [{ name: "betId", type: "uint256" }],
-    outputs: [],
-  },
-  {
-    type: "function",
-    name: "refund",
-    stateMutability: "nonpayable",
-    inputs: [{ name: "betId", type: "uint256" }],
-    outputs: [],
-  },
-  {
-    type: "function",
-    name: "setFeeBpsForSide",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "betId", type: "uint256" },
-      { name: "side", type: "address" },
-      { name: "newBps", type: "uint16" },
-    ],
-    outputs: [],
-  },
-  {
-    type: "function",
-    name: "getBet",
-    stateMutability: "view",
-    inputs: [{ name: "betId", type: "uint256" }],
-    outputs: [
-      {
-        type: "tuple",
-        components: [
-          { name: "amount", type: "uint256" },
-          { name: "challenger", type: "address" },
-          { name: "accepter", type: "address" },
-          { name: "challengerFeeBps", type: "uint16" },
-          { name: "accepterFeeBps", type: "uint16" },
-          { name: "challengerDeposited", type: "bool" },
-          { name: "accepterDeposited", type: "bool" },
-          { name: "status", type: "uint8" },
-          { name: "winner", type: "address" },
-          { name: "termsHash", type: "bytes32" },
-        ],
-      },
-    ],
-  },
-] as const;
+// ABIs live in ./evm-abi.ts so they can be imported by the
+// scripts/check-evm-abi-sync.ts drift check without triggering the
+// full bot env validation.
+import { ESCROW_ABI, ERC20_BALANCE_ABI } from "./evm-abi.js";
 
 // ----------------------------------------------------------
 // Adapter functions (mirror apps/bot/src/solana.ts naming)
@@ -317,16 +234,6 @@ export function explorerTxUrl(sig: string): string {
     : "https://sepolia.basescan.org";
   return `${base}/tx/${sig}`;
 }
-
-const ERC20_BALANCE_ABI = [
-  {
-    type: "function",
-    name: "balanceOf",
-    stateMutability: "view",
-    inputs: [{ name: "owner", type: "address" }],
-    outputs: [{ type: "uint256" }],
-  },
-] as const;
 
 /** Read the USDC balance of a Base address. Returns null if the EVM adapter
  *  isn't configured (no env vars). */
