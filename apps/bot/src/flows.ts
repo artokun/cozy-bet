@@ -488,14 +488,40 @@ export async function initializeOnChain(betId: bigint) {
   const termsHash = bet.termsCanonical
     ? Array.from(termsHashOf(bet.termsCanonical))
     : null;
-  const { sig, betPda, vaultPda } = await chainInitializeBet(chain, {
-    betId,
-    amount: BigInt(bet.amount),
-    challenger: challengerWallet,
-    accepter: accepterWallet,
-    termsHash,
-  });
   const d = db();
+  // Atomic init lock: two concurrent Accept clicks (button double-tap)
+  // would otherwise both reach chainInitializeBet. The Anchor program +
+  // Solidity contract reject the duplicate via PDA / seed collision, but
+  // the second tx still burns gas + leaves a confusing on-chain log.
+  // Same pattern as claimResolutionLock; uses init_tx_sig as the slot.
+  const claimed = await d
+    .update(bets)
+    .set({ initTxSig: "PENDING:initialize" })
+    .where(and(eq(bets.id, betId), isNull(bets.initTxSig)))
+    .returning();
+  if (claimed.length === 0) {
+    throw new Error(
+      "another initialize is already in flight for this bet (race lost)",
+    );
+  }
+  let sig: string, betPda: string | undefined, vaultPda: string | undefined;
+  try {
+    ({ sig, betPda, vaultPda } = await chainInitializeBet(chain, {
+      betId,
+      amount: BigInt(bet.amount),
+      challenger: challengerWallet,
+      accepter: accepterWallet,
+      termsHash,
+    }));
+  } catch (e) {
+    // Release the lock so the user can retry after fixing whatever
+    // (e.g. wallet linking, RPC outage).
+    await d
+      .update(bets)
+      .set({ initTxSig: null })
+      .where(eq(bets.id, betId));
+    throw e;
+  }
   await d
     .update(bets)
     .set({
