@@ -18,6 +18,7 @@ import {
   adminResolve,
   agreeCancel,
   agreeCounter,
+  adminStats,
   applyShareDiscount,
   arbiterDecide,
   claimArbiter,
@@ -256,6 +257,10 @@ export const reconcile = new SlashCommandBuilder()
     o.setName("bet_id").setDescription("bet id").setRequired(true),
   );
 
+export const adminStatsCmd = new SlashCommandBuilder()
+  .setName("admin-stats")
+  .setDescription("(admin) Bot health snapshot — totals, volume, arbiter cases");
+
 export const previewTermsCmd = new SlashCommandBuilder()
   .setName("preview-terms")
   .setDescription("(admin) Try the LLM disambig on a phrase without creating a bet")
@@ -321,6 +326,7 @@ export const commandDefinitions: RESTPostAPIApplicationCommandsJSONBody[] = [
   arbiterClaimCmd.toJSON(),
   arbiterReviewCmd.toJSON(),
   arbiterDecideCmd.toJSON(),
+  adminStatsCmd.toJSON(),
 ];
 
 export async function handleSaybet(i: ChatInputCommandInteraction) {
@@ -988,6 +994,65 @@ export async function handleArbiterDecide(i: ChatInputCommandInteraction) {
       `⚖️ Arbiter decided. Winner: ${winner}. Tx: ${url}`,
     );
     await updateAnnouncement(i.client, betId);
+  } catch (e: any) {
+    await i.editReply(`Error: ${e?.message ?? String(e)}`);
+  }
+}
+
+export async function handleAdminStats(i: ChatInputCommandInteraction) {
+  if (!isAdmin(i.user.id)) {
+    await i.reply({ content: "Admin only.", ephemeral: true });
+    return;
+  }
+  await i.deferReply({ ephemeral: true });
+  try {
+    const s = await adminStats();
+    const fmt = (atoms: bigint) =>
+      (Number(atoms) / 1e6).toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+    const statusOrder = [
+      "proposed",
+      "accepted",
+      "pending",
+      "funded",
+      "resolved",
+      "drawn",
+      "refunded",
+      "canceled",
+      "disputed",
+    ];
+    const statusLines = statusOrder
+      .filter((k) => s.byStatus[k])
+      .map((k) => `· ${k}: **${s.byStatus[k]}**`)
+      .join("\n");
+    const lines = [
+      `**Bot health snapshot** — ${s.total} bet${s.total === 1 ? "" : "s"} total · ${s.totalUsers} user${s.totalUsers === 1 ? "" : "s"}`,
+      ``,
+      `**By chain**`,
+      `· Solana: **${s.byChain.solana}** · Base: **${s.byChain.base}**`,
+      ``,
+      `**By status**`,
+      statusLines || "_(none yet)_",
+      ``,
+      `**Wallets linked**`,
+      `· Solana: **${s.walletLinkedUsers.solana}** · Base: **${s.walletLinkedUsers.base}**`,
+      ``,
+      `**Arbiter cases**`,
+      `· open: **${s.arbiter.open}** (unclaimed: ${s.arbiter.unclaimed} · claimed: ${s.arbiter.claimed})`,
+      ``,
+      `**Share discounts redeemed:** ${s.shareDiscountsRedeemed}`,
+      ``,
+      `**Resolved volume (pot)**`,
+      `· Solana: ${fmt(s.resolvedVolumeAtoms.solana)} USDC`,
+      `· Base: ${fmt(s.resolvedVolumeAtoms.base)} USDC`,
+      ``,
+      `**Approx fees collected** _(uses default 250bps both sides — actual per-side bps may differ for /share-discounted bets)_`,
+      `· Solana: ${fmt(s.approxFeesCollectedAtoms.solana)} USDC`,
+      `· Base: ${fmt(s.approxFeesCollectedAtoms.base)} USDC`,
+    ];
+    await i.editReply({ content: lines.join("\n") });
   } catch (e: any) {
     await i.editReply(`Error: ${e?.message ?? String(e)}`);
   }

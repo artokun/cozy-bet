@@ -6,6 +6,7 @@ import {
 import {
   handleAccept,
   handleAdminResolve,
+  handleAdminStats,
   handleArbiterClaim,
   handleArbiterDecide,
   handleArbiterReview,
@@ -82,6 +83,8 @@ export async function routeSlash(i: ChatInputCommandInteraction) {
       return handleArbiterReview(i);
     case "arbiter-decide":
       return handleArbiterDecide(i);
+    case "admin-stats":
+      return handleAdminStats(i);
   }
 }
 

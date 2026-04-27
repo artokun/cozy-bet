@@ -1451,3 +1451,78 @@ export async function leaderboardData(args: {
   }
   return rows;
 }
+
+export type AdminStats = {
+  total: number;
+  byStatus: Record<string, number>;
+  byChain: Record<"solana" | "base", number>;
+  totalUsers: number;
+  walletLinkedUsers: { solana: number; base: number };
+  arbiter: {
+    open: number; // arbiter_requested_at IS NOT NULL AND status = 'disputed'
+    unclaimed: number; // also arbiter_discord_id IS NULL
+    claimed: number; // also arbiter_discord_id IS NOT NULL
+  };
+  shareDiscountsRedeemed: number; // bets where either side has a share_url
+  /** Sum of stake (in 6-dec atoms) over Resolved bets, per chain. */
+  resolvedVolumeAtoms: { solana: bigint; base: bigint };
+  /** Approximate total fees collected = sum(stake * (cBps + aBps) / 10000)
+   *  over Resolved bets. Computed in JS since per-side bps lives on-chain
+   *  not in DB; approximated using BET_FEE_BPS for both sides. */
+  approxFeesCollectedAtoms: { solana: bigint; base: bigint };
+};
+
+export async function adminStats(): Promise<AdminStats> {
+  const d = db();
+  const rows = await d.select().from(bets);
+  const userRows = await d.select().from(users);
+
+  const byStatus: Record<string, number> = {};
+  const byChain: Record<"solana" | "base", number> = { solana: 0, base: 0 };
+  let openArb = 0;
+  let unclaimedArb = 0;
+  let claimedArb = 0;
+  let sharesRedeemed = 0;
+  const resolvedVolume = { solana: 0n, base: 0n };
+  const fees = { solana: 0n, base: 0n };
+  // Approximate per-side fee bps used when no per-bet override: BET_FEE_BPS.
+  const defaultBps = BigInt(env.BET_FEE_BPS);
+
+  for (const b of rows) {
+    byStatus[b.status] = (byStatus[b.status] ?? 0) + 1;
+    const chain = (b.chain as "solana" | "base") ?? "solana";
+    byChain[chain] += 1;
+    if (b.arbiterRequestedAt && b.status === BetStatus.Disputed) {
+      openArb += 1;
+      if (b.arbiterDiscordId) claimedArb += 1;
+      else unclaimedArb += 1;
+    }
+    if (b.challengerShareUrl) sharesRedeemed += 1;
+    if (b.accepterShareUrl) sharesRedeemed += 1;
+    if (b.status === BetStatus.Resolved) {
+      const stake = BigInt(b.amount);
+      resolvedVolume[chain] += stake * 2n;
+      // Approximate combined fee = stake * (defaultBps + defaultBps) / 10000
+      // since DB doesn't track the per-side bps that actually fired on-chain.
+      fees[chain] += (stake * 2n * defaultBps) / 10_000n;
+    }
+  }
+
+  const walletLinked = { solana: 0, base: 0 };
+  for (const u of userRows) {
+    if (u.walletPubkey) walletLinked.solana += 1;
+    if (u.evmAddress) walletLinked.base += 1;
+  }
+
+  return {
+    total: rows.length,
+    byStatus,
+    byChain,
+    totalUsers: userRows.length,
+    walletLinkedUsers: walletLinked,
+    arbiter: { open: openArb, unclaimed: unclaimedArb, claimed: claimedArb },
+    shareDiscountsRedeemed: sharesRedeemed,
+    resolvedVolumeAtoms: resolvedVolume,
+    approxFeesCollectedAtoms: fees,
+  };
+}
