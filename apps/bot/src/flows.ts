@@ -14,6 +14,7 @@ import {
   chainSetFeeBpsForSide,
 } from "./chain.js";
 import { disambig, termsHashOf } from "./llm.js";
+import { isOnTimeResolution } from "./reliability.js";
 
 /** Determine the wallet a user has linked on a given chain. Returns null if
  *  they haven't linked one. */
@@ -906,9 +907,7 @@ async function bumpReliability(
 ) {
   const d = db();
   const now = new Date();
-  const within24h = deadline
-    ? Math.abs(now.getTime() - deadline.getTime()) <= 24 * 60 * 60 * 1000
-    : true; // no deadline = treat as on-time
+  const within24h = isOnTimeResolution(now, deadline);
   const recipients = accepterId ? [challengerId, accepterId] : [challengerId];
   for (const uid of recipients) {
     if (within24h) {
