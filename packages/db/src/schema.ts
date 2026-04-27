@@ -88,6 +88,10 @@ export const bets = pgTable(
     arbiterRequestedAt: timestamp("arbiter_requested_at", { withTimezone: true }),
     arbiterRequestedBy: text("arbiter_requested_by"),
     arbiterDiscordId: text("arbiter_discord_id"),
+    /** Winner's chosen dunk GIF after resolution. dunk_posted_at is set when
+     *  the bot posts the celebration in the bet's channel. */
+    dunkGifUrl: text("dunk_gif_url"),
+    dunkPostedAt: timestamp("dunk_posted_at", { withTimezone: true }),
     /** Single-round counter-proposal. Either party can /counter while the bet
      *  is still in 'proposed' state. Other party gets Agree/Deny buttons.
      *  On Agree → update amount/description, clear counter_*, bet stays

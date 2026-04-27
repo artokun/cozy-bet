@@ -1,6 +1,7 @@
 import {
   type ButtonInteraction,
   type ChatInputCommandInteraction,
+  type StringSelectMenuInteraction,
 } from "discord.js";
 import {
   handleAccept,
@@ -18,6 +19,7 @@ import {
   handleDecline,
   handleDoubleOrNothing,
   handleDraw,
+  handleDunkSelect,
   handleHelp,
   handleLeaderboard,
   handleLinkWallet,
@@ -99,5 +101,13 @@ export async function routeButton(i: ButtonInteraction) {
       return handleCounterAgree(i, betId);
     case "counter-deny":
       return handleCounterDeny(i, betId);
+  }
+}
+
+export async function routeSelectMenu(i: StringSelectMenuInteraction) {
+  const [action] = i.customId.split(":");
+  switch (action) {
+    case "dunk":
+      return handleDunkSelect(i);
   }
 }

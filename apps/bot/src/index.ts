@@ -1,6 +1,10 @@
 import { Client, GatewayIntentBits, Events, Partials } from "discord.js";
 import { env, allowedGuilds } from "./env.js";
-import { routeButton, routeSlash } from "./discord/interactions.js";
+import {
+  routeButton,
+  routeSelectMenu,
+  routeSlash,
+} from "./discord/interactions.js";
 import { startApi } from "./api.js";
 import { startWatchdog } from "./watchdog.js";
 import {
@@ -40,6 +44,7 @@ client.on(Events.InteractionCreate, async (i) => {
   try {
     if (i.isChatInputCommand()) await routeSlash(i);
     else if (i.isButton()) await routeButton(i);
+    else if (i.isStringSelectMenu()) await routeSelectMenu(i);
   } catch (e: any) {
     console.error("[interaction] error", e);
     try {

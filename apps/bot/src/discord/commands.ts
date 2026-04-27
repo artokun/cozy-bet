@@ -2,10 +2,14 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  EmbedBuilder,
   SlashCommandBuilder,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
   type ButtonInteraction,
   type ChatInputCommandInteraction,
   type RESTPostAPIApplicationCommandsJSONBody,
+  type StringSelectMenuInteraction,
 } from "discord.js";
 import { formatAmount, formatBet, renderBetCard } from "./render.js";
 import { chainExplorerTxUrl, type Chain } from "../chain.js";
@@ -39,7 +43,9 @@ import {
   requestArbiter,
   requestCancel,
   setAnnounceMessageId,
+  setDunkGif,
 } from "../flows.js";
+import { getDunks } from "../dunks.js";
 import { adminDiscordIds, isAdmin } from "../env.js";
 import { connection, mockUsdcMint } from "../solana.js";
 import * as evm from "../evm.js";
@@ -1101,6 +1107,7 @@ export async function handleHelp(i: ChatInputCommandInteraction) {
       "**Buttons / DMs you might see**",
       "• ✅ Accept / ❌ Decline — on every challenge embed",
       "• 🎲 Double or Nothing — DMed to the loser of a resolved bet",
+      "• 🏀 Dunk picker — DMed to the winner of a resolved bet (pick a GIF, posts in channel)",
       "• ✅ Agree / ❌ Deny — for /counter and /cancel proposals",
       "",
       "**Disputes**",
@@ -1346,6 +1353,26 @@ async function sendResolutionDms(
         ? bet.accepterId
         : bet.challengerId
       : null;
+  // Build the dunk-picker SelectMenu for the WINNER. Capped at 25 options
+  // (Discord limit). value carries an index into getDunks() so we can look
+  // up the URL on submit without parsing customId.
+  const dunks = getDunks().slice(0, 25);
+  const winnerDunkRow =
+    bet.winnerId && !bet.dunkPostedAt && dunks.length > 0
+      ? new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+          new StringSelectMenuBuilder()
+            .setCustomId(`dunk:${bet.id}`)
+            .setPlaceholder("🏀 Pick a dunk to post in the channel…")
+            .addOptions(
+              dunks.map((d, idx) =>
+                new StringSelectMenuOptionBuilder()
+                  .setLabel(d.label.slice(0, 100))
+                  .setValue(String(idx)),
+              ),
+            ),
+        )
+      : null;
+
   for (const uid of recipients) {
     try {
       const u = await i.client.users.fetch(uid);
@@ -1361,10 +1388,91 @@ async function sendResolutionDms(
             ),
           ],
         });
+      } else if (uid === bet.winnerId && winnerDunkRow) {
+        await u.send({
+          content: `${dmContent}\n\n🏀 Want to dunk on the loser? Pick a GIF — it'll post in the bet's channel.`,
+          components: [winnerDunkRow],
+        });
       } else {
         await u.send(dmContent);
       }
     } catch {}
+  }
+}
+
+/** Winner picked a dunk GIF from the dropdown. Post it in the bet's channel
+ *  (with DM fallback) and offer a "Share on X" button. */
+export async function handleDunkSelect(i: StringSelectMenuInteraction) {
+  await i.deferUpdate();
+  const [, betIdStr] = i.customId.split(":");
+  if (!betIdStr) return;
+  let betId: bigint;
+  try {
+    betId = BigInt(betIdStr);
+  } catch {
+    return;
+  }
+  const idx = parseInt(i.values[0] ?? "0", 10);
+  const dunk = getDunks()[idx];
+  if (!dunk) {
+    await i.followUp({ content: "Couldn't find that GIF.", ephemeral: true });
+    return;
+  }
+  try {
+    const { bet, loserId } = await setDunkGif({
+      betId,
+      winnerId: i.user.id,
+      url: dunk.url,
+    });
+    // Replace the picker with a confirmation so the user can't double-pick.
+    try {
+      await i.editReply({
+        content: `🏀 Posted! Dunked with **${dunk.label}**.`,
+        components: [],
+      });
+    } catch {}
+
+    const embed = new EmbedBuilder()
+      .setTitle(`🏀 ${i.user.username} dunks on the loser`)
+      .setDescription(
+        loserId
+          ? `<@${i.user.id}> dunks on <@${loserId}> for bet \`${bet.shortcode}\`.`
+          : `<@${i.user.id}> wins bet \`${bet.shortcode}\`.`,
+      )
+      .setImage(dunk.url)
+      .setColor(0x2ebe6f);
+    await safeChannelSend(i.client, {
+      channelId: bet.channelId,
+      payload: { embeds: [embed] },
+      fallbackRecipients: [
+        bet.challengerId,
+        bet.accepterId,
+      ].filter(Boolean) as string[],
+      betId: bet.id,
+    });
+
+    // Offer winner a Share-on-X follow-up DM.
+    const tweetText = `Just dunked on someone for ${formatAmount(BigInt(bet.amount) * 2n)} USDC on cozy-bet 🏀\n\n${dunk.url}`;
+    const xUrl = `https://x.com/intent/tweet?text=${encodeURIComponent(tweetText)}`;
+    try {
+      const u = await i.client.users.fetch(i.user.id);
+      await u.send({
+        content: "Want to brag on X?",
+        components: [
+          new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder()
+              .setURL(xUrl)
+              .setLabel("Share on X")
+              .setStyle(ButtonStyle.Link),
+          ),
+        ],
+      });
+    } catch {}
+  } catch (e: any) {
+    await i.followUp({
+      content: `Couldn't post that dunk: ${e?.message ?? String(e)}`,
+      ephemeral: true,
+    });
   }
 }
 

@@ -978,6 +978,42 @@ export async function agreeCancel(betId: bigint, agreerId: string) {
   return { sig };
 }
 
+/** Winner chooses a dunk GIF post-resolution. Records URL + posted-at on the
+ *  bet so we don't re-post and can show it in the explorer. Returns the
+ *  loser's discord id so the caller can render the channel embed. */
+export async function setDunkGif(args: {
+  betId: bigint;
+  winnerId: string;
+  url: string;
+}) {
+  const d = db();
+  const bet = await getBet(args.betId);
+  if (!bet) throw new Error("bet not found");
+  if (bet.winnerId !== args.winnerId) {
+    throw new Error("only the winner can pick a dunk GIF");
+  }
+  if (bet.dunkPostedAt) {
+    throw new Error("dunk already posted for this bet");
+  }
+  const loserId =
+    bet.winnerId && bet.accepterId
+      ? bet.winnerId === bet.challengerId
+        ? bet.accepterId
+        : bet.challengerId
+      : null;
+  await d
+    .update(bets)
+    .set({ dunkGifUrl: args.url, dunkPostedAt: new Date() })
+    .where(eq(bets.id, args.betId));
+  await d.insert(betEvents).values({
+    betId: args.betId,
+    actorDiscordId: args.winnerId,
+    eventType: "dunked",
+    payload: { url: args.url, loserId },
+  });
+  return { bet, loserId };
+}
+
 /** Either participant requests an arbiter on a Funded or Disputed bet.
  *  Sets the bet to Disputed if it was Funded, marks arbiter_requested_*
  *  so the watchdog + admin DMs know to escalate. Idempotent: if already
