@@ -833,7 +833,16 @@ async function finalizeDraw(betId: bigint) {
     eventType: "drawn",
     payload: { sig },
   });
-  await bumpReliability(bet.challengerId, bet.accepterId, bet.deadline);
+  // Reliability counters are a leaderboard side-effect; failure here
+  // shouldn't mask a successful on-chain resolve. Log + continue.
+  try {
+    await bumpReliability(bet.challengerId, bet.accepterId, bet.deadline);
+  } catch (e) {
+    console.warn(
+      `[bumpReliability] failed for bet ${bet.id} — leaderboard counters skipped:`,
+      e instanceof Error ? e.message : String(e),
+    );
+  }
   return { outcome: "drawn" as const, sig };
 }
 
@@ -873,7 +882,16 @@ async function finalizeResolve(betId: bigint, winnerDiscordId: string) {
     eventType: "resolved",
     payload: { sig, winner: winnerDiscordId },
   });
-  await bumpReliability(bet.challengerId, bet.accepterId, bet.deadline);
+  // Reliability counters are a leaderboard side-effect; failure here
+  // shouldn't mask a successful on-chain resolve. Log + continue.
+  try {
+    await bumpReliability(bet.challengerId, bet.accepterId, bet.deadline);
+  } catch (e) {
+    console.warn(
+      `[bumpReliability] failed for bet ${bet.id} — leaderboard counters skipped:`,
+      e instanceof Error ? e.message : String(e),
+    );
+  }
   return { outcome: "resolved" as const, sig, winnerDiscordId };
 }
 
@@ -1487,7 +1505,16 @@ export async function arbiterDecide(args: {
     eventType: "arbiter_decided",
     payload: { sig, winner: args.winnerDiscordId, by: args.adminId },
   });
-  await bumpReliability(bet.challengerId, bet.accepterId, bet.deadline);
+  // Reliability counters are a leaderboard side-effect; failure here
+  // shouldn't mask a successful on-chain resolve. Log + continue.
+  try {
+    await bumpReliability(bet.challengerId, bet.accepterId, bet.deadline);
+  } catch (e) {
+    console.warn(
+      `[bumpReliability] failed for bet ${bet.id} — leaderboard counters skipped:`,
+      e instanceof Error ? e.message : String(e),
+    );
+  }
   return { sig, winnerDiscordId: args.winnerDiscordId };
 }
 
@@ -1555,7 +1582,16 @@ export async function refundBet(betId: bigint) {
     eventType: "refunded",
     payload: { sig },
   });
-  await bumpReliability(bet.challengerId, bet.accepterId, bet.deadline);
+  // Reliability counters are a leaderboard side-effect; failure here
+  // shouldn't mask a successful on-chain resolve. Log + continue.
+  try {
+    await bumpReliability(bet.challengerId, bet.accepterId, bet.deadline);
+  } catch (e) {
+    console.warn(
+      `[bumpReliability] failed for bet ${bet.id} — leaderboard counters skipped:`,
+      e instanceof Error ? e.message : String(e),
+    );
+  }
   return sig;
 }
 
