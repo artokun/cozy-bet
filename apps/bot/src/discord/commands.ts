@@ -548,7 +548,9 @@ export async function handleResolve(i: ChatInputCommandInteraction) {
     }
     await updateAnnouncement(i.client, betId);
   } catch (e: any) {
-    await i.editReply(`Error: ${e?.message ?? String(e)}`);
+    // Race-lost on the resolution lock — surface the actual outcome
+    // instead of the raw "another resolution in flight" error.
+    await replyWithRaceFallback(i, betId, e);
   }
 }
 
@@ -573,8 +575,57 @@ export async function handleDraw(i: ChatInputCommandInteraction) {
     }
     await updateAnnouncement(i.client, betId);
   } catch (e: any) {
-    await i.editReply(`Error: ${e?.message ?? String(e)}`);
+    await replyWithRaceFallback(i, betId, e);
   }
+}
+
+/**
+ * If the error is a resolution-lock race-loss AND the bet has since
+ * been settled (Resolved / Drawn / Refunded) by the lock-winner,
+ * show the actual outcome to this user instead of the raw error.
+ *
+ * Otherwise fall through to the regular error reply.
+ */
+async function replyWithRaceFallback(
+  i: ChatInputCommandInteraction,
+  betId: bigint,
+  e: unknown,
+) {
+  const msg = e instanceof Error ? e.message : String(e);
+  const isRaceLoss = /resolution is already in flight/i.test(msg);
+  if (isRaceLoss) {
+    const after = await getBet(betId);
+    if (after) {
+      if (after.status === "resolved" && after.winnerId) {
+        const url = isRealTxSig(after.resolutionTxSig)
+          ? chainExplorerTxUrl(after.chain as Chain, after.resolutionTxSig!)
+          : null;
+        await i.editReply(
+          `✅ Resolved. Winner: <@${after.winnerId}>.${url ? ` tx: ${url}` : ""}`,
+        );
+        return;
+      }
+      if (after.status === "drawn") {
+        const url = isRealTxSig(after.resolutionTxSig)
+          ? chainExplorerTxUrl(after.chain as Chain, after.resolutionTxSig!)
+          : null;
+        await i.editReply(
+          `🤝 Draw confirmed. Both stakes refunded.${url ? ` tx: ${url}` : ""}`,
+        );
+        return;
+      }
+      if (after.status === "refunded") {
+        const url = isRealTxSig(after.resolutionTxSig)
+          ? chainExplorerTxUrl(after.chain as Chain, after.resolutionTxSig!)
+          : null;
+        await i.editReply(
+          `↩️ Refunded.${url ? ` tx: ${url}` : ""}`,
+        );
+        return;
+      }
+    }
+  }
+  await i.editReply(`Error: ${msg}`);
 }
 
 export async function handleCancel(i: ChatInputCommandInteraction) {
