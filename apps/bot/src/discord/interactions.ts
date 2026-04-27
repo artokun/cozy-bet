@@ -37,55 +37,63 @@ import {
   handleStatus,
 } from "./commands.js";
 
+/** commandName → handler. Exported so tests can assert every entry in
+ *  commandDefinitions has a routing entry (else we'd ship a slash command
+ *  that registered with Discord but did nothing). */
+export const slashRoutes: Record<
+  string,
+  (i: ChatInputCommandInteraction) => Promise<unknown> | unknown
+> = {
+  saybet: handleSaybet,
+  mybets: handleMyBets,
+  "open-bets": handleOpenBets,
+  resolve: handleResolve,
+  draw: handleDraw,
+  cancel: handleCancel,
+  counter: handleCounter,
+  linkwallet: handleLinkWallet,
+  linktwitter: handleLinkTwitter,
+  share: handleShare,
+  "confirm-share": handleConfirmShare,
+  balance: handleBalance,
+  help: handleHelp,
+  status: handleStatus,
+  leaderboard: handleLeaderboard,
+  adminresolve: handleAdminResolve,
+  reconcile: handleReconcile,
+  "preview-terms": handlePreviewTerms,
+  requestarbiter: handleRequestArbiter,
+  "arbiter-claim": handleArbiterClaim,
+  "arbiter-review": handleArbiterReview,
+  "arbiter-decide": handleArbiterDecide,
+  "admin-stats": handleAdminStats,
+};
+
+/** action prefix → button handler. customId format is `action:betId[:arg]`. */
+export const buttonRoutes: Record<
+  string,
+  (i: ButtonInteraction, betId: bigint) => Promise<unknown> | unknown
+> = {
+  accept: handleAccept,
+  decline: handleDecline,
+  don: handleDoubleOrNothing,
+  "cancel-agree": handleCancelAgree,
+  "cancel-deny": handleCancelDeny,
+  "counter-agree": handleCounterAgree,
+  "counter-deny": handleCounterDeny,
+};
+
+/** action prefix → select-menu handler. */
+export const selectMenuRoutes: Record<
+  string,
+  (i: StringSelectMenuInteraction) => Promise<unknown> | unknown
+> = {
+  dunk: handleDunkSelect,
+};
+
 export async function routeSlash(i: ChatInputCommandInteraction) {
-  switch (i.commandName) {
-    case "saybet":
-      return handleSaybet(i);
-    case "mybets":
-      return handleMyBets(i);
-    case "open-bets":
-      return handleOpenBets(i);
-    case "resolve":
-      return handleResolve(i);
-    case "draw":
-      return handleDraw(i);
-    case "cancel":
-      return handleCancel(i);
-    case "counter":
-      return handleCounter(i);
-    case "linkwallet":
-      return handleLinkWallet(i);
-    case "linktwitter":
-      return handleLinkTwitter(i);
-    case "share":
-      return handleShare(i);
-    case "confirm-share":
-      return handleConfirmShare(i);
-    case "balance":
-      return handleBalance(i);
-    case "help":
-      return handleHelp(i);
-    case "status":
-      return handleStatus(i);
-    case "leaderboard":
-      return handleLeaderboard(i);
-    case "adminresolve":
-      return handleAdminResolve(i);
-    case "reconcile":
-      return handleReconcile(i);
-    case "preview-terms":
-      return handlePreviewTerms(i);
-    case "requestarbiter":
-      return handleRequestArbiter(i);
-    case "arbiter-claim":
-      return handleArbiterClaim(i);
-    case "arbiter-review":
-      return handleArbiterReview(i);
-    case "arbiter-decide":
-      return handleArbiterDecide(i);
-    case "admin-stats":
-      return handleAdminStats(i);
-  }
+  const handler = slashRoutes[i.commandName];
+  if (handler) return handler(i);
 }
 
 export async function routeButton(i: ButtonInteraction) {
@@ -101,28 +109,13 @@ export async function routeButton(i: ButtonInteraction) {
     await i.reply({ content: "Invalid bet id.", ephemeral: true });
     return;
   }
-  switch (action) {
-    case "accept":
-      return handleAccept(i, betId);
-    case "decline":
-      return handleDecline(i, betId);
-    case "don":
-      return handleDoubleOrNothing(i, betId);
-    case "cancel-agree":
-      return handleCancelAgree(i, betId);
-    case "cancel-deny":
-      return handleCancelDeny(i, betId);
-    case "counter-agree":
-      return handleCounterAgree(i, betId);
-    case "counter-deny":
-      return handleCounterDeny(i, betId);
-  }
+  const handler = buttonRoutes[action];
+  if (handler) return handler(i, betId);
 }
 
 export async function routeSelectMenu(i: StringSelectMenuInteraction) {
   const [action] = i.customId.split(":");
-  switch (action) {
-    case "dunk":
-      return handleDunkSelect(i);
-  }
+  if (!action) return;
+  const handler = selectMenuRoutes[action];
+  if (handler) return handler(i);
 }
