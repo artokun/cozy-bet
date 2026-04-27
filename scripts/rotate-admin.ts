@@ -132,6 +132,18 @@ async function rotateSolana(args: Args): Promise<void> {
 
   if (args.dryRun) {
     console.log("\n[dry-run] no transaction sent. Pass --confirm to execute.");
+    console.log(
+      "         note: devnet/mainnet bytecode must include update_authority",
+    );
+    console.log(
+      "         (added in cozy-bet-aom). If the program hasn't been redeployed",
+    );
+    console.log(
+      "         since that landed, --confirm will fail with InstructionFallback.",
+    );
+    console.log(
+      "         Tracked as cozy-bet-qom. Local validator (test:local) is fine.",
+    );
     return;
   }
 
