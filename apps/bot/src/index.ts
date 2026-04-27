@@ -9,11 +9,35 @@ import {
   commandDefinitions,
   validateCommandDefinitions,
 } from "./discord/commands.js";
+import * as evm from "./evm.js";
+import { getDunks } from "./dunks.js";
 
 // Fail fast on duplicate / malformed slash command names so we never push
 // a broken catalog up to Discord. Throwing here aborts startup before the
 // gateway connects.
 validateCommandDefinitions(commandDefinitions);
+
+// Startup config summary — one log block so operators can verify env at
+// a glance instead of greping multiple files. Don't print secrets.
+function logBootSummary() {
+  const lines: string[] = [
+    `[boot] cozy-bet bot — ${commandDefinitions.length} slash commands registered`,
+    `[boot] solana cluster: ${env.SOLANA_CLUSTER} · program ${env.PROGRAM_ID.slice(0, 8)}…`,
+    `[boot] evm: ${
+      evm.isConfigured
+        ? `${env.EVM_NETWORK} (escrow ${env.EVM_ESCROW_ADDRESS?.slice(0, 10)}…)`
+        : "not configured (Base bets disabled)"
+    }`,
+    `[boot] llm disambig: ${env.ANTHROPIC_API_KEY ? `enabled (${env.DISAMBIG_MODEL})` : "DISABLED — /saybet uses verbatim text"}`,
+    `[boot] /share verification: ${env.X_BEARER_TOKEN ? `enabled (#${env.SHARE_HASHTAG.replace(/^#/, "")} → ${env.SHARE_DISCOUNT_BPS}bps)` : "DISABLED — /confirm-share rejects"}`,
+    `[boot] admin api: ${env.ADMIN_API_TOKEN ? "enabled" : "disabled (set ADMIN_API_TOKEN)"}`,
+    `[boot] watchdog: nudge=${env.WATCHDOG_NUDGE_ENABLED ? "on" : "off"} · pending-refund=${env.WATCHDOG_PENDING_REFUND_MINUTES > 0 ? `${env.WATCHDOG_PENDING_REFUND_MINUTES}m` : "off"} · interval=${env.WATCHDOG_INTERVAL_SECONDS}s`,
+    `[boot] dunks: ${getDunks().length} GIF${getDunks().length === 1 ? "" : "s"} loaded${process.env.DUNK_GIFS ? " (from env override)" : " (default list)"}`,
+    `[boot] admins: ${(env.ADMIN_DISCORD_IDS ?? "").split(",").filter(Boolean).length}${env.USER_ALLOWLIST_ENABLED ? " · USER_ALLOWLIST=on" : ""}`,
+  ];
+  for (const line of lines) console.log(line);
+}
+logBootSummary();
 import { startApi } from "./api.js";
 import { startWatchdog } from "./watchdog.js";
 import {
