@@ -1,6 +1,6 @@
 /**
  * EVM (Base) chain adapter. Mirrors apps/bot/src/solana.ts's surface so
- * apps/bot/src/chain/index.ts can dispatch by bet.chain transparently.
+ * apps/bot/src/chain.ts can dispatch by bet.chain transparently.
  *
  * Uses viem for RPC + signing. Resolver private key from RESOLVER_PRIVATE_KEY
  * env. Treasury addresses from EVM_TREASURY_OWNER_1..4.
