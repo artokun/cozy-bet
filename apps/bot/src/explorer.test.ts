@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   baseExplorerTxUrl,
   explorerTxUrlFor,
+  isRealTxSig,
   solanaExplorerTxUrl,
 } from "./explorer.js";
 
@@ -46,4 +47,41 @@ test("explorerTxUrlFor dispatches by chain", () => {
     explorerTxUrlFor("base", "devnet", "base-sepolia", "0xsig"),
     "https://sepolia.basescan.org/tx/0xsig",
   );
+});
+
+test("isRealTxSig accepts real-looking sigs", () => {
+  // Solana base58.
+  assert.equal(
+    isRealTxSig("2RFA26AxvycTLCipevqTtfai4etjFBpbTDRrPkfqgRWnb4N48ce1Vg8Dm9fhXJyxMpYd5PffmndQuim6Y3Lg6Yem"),
+    true,
+  );
+  // EVM 0x.
+  assert.equal(
+    isRealTxSig(
+      "0xabc123def456abc123def456abc123def456abc123def456abc123def456abcd",
+    ),
+    true,
+  );
+  // Even a short non-PENDING value is "real" for display purposes —
+  // the helper's job is just to gate out the lock sentinel.
+  assert.equal(isRealTxSig("anything"), true);
+});
+
+test("isRealTxSig rejects PENDING:* lock sentinels", () => {
+  assert.equal(isRealTxSig("PENDING:resolve"), false);
+  assert.equal(isRealTxSig("PENDING:draw"), false);
+  assert.equal(isRealTxSig("PENDING:refund"), false);
+  assert.equal(isRealTxSig("PENDING:arbiter-decide"), false);
+  assert.equal(isRealTxSig("PENDING:initialize"), false);
+  // Including the share-discount form (URL appended).
+  assert.equal(
+    isRealTxSig("PENDING:https://x.com/u/status/12345"),
+    false,
+  );
+});
+
+test("isRealTxSig rejects null/undefined/empty", () => {
+  assert.equal(isRealTxSig(null), false);
+  assert.equal(isRealTxSig(undefined), false);
+  assert.equal(isRealTxSig(""), false);
 });
