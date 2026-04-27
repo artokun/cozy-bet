@@ -35,11 +35,16 @@ on the single hot wallet — speed matters more than custody safety there.
 3. Note the multisig vault's pubkey — this becomes the new program
    admin and the four-treasury-owners replacement target.
 4. Run the on-chain admin rotation:
-   - `update_authority(new_admin = <squads-vault-pubkey>)` — moves
-     DEFAULT_ADMIN_ROLE off the resolver.
-   - `update_treasury_owners(new_owners = [<squads-vault>, <squads-vault>, <squads-vault>, <squads-vault>])`
-     — point all four owners at the same vault for now (we'll split
-     them in Phase 2). The 4-way split still works mechanically; it's
+   - `update_authority(new_authority = <squads-vault-pubkey>)` —
+     moves admin off the resolver.
+     **⚠️ Status:** the current Solana program does **not** ship
+     this instruction yet. Tracked as `cozy-bet-aom` and must land
+     before Phase 1 can proceed. EVM side has no equivalent gap
+     (OpenZeppelin AccessControl ships with `grantRole` /
+     `renounceRole`).
+   - `update_config(treasury_owners = [<squads-vault>; 4])` — point
+     all four owners at the same vault for now (we'll split them
+     in Phase 2). The 4-way split still works mechanically; it's
      just one wallet receiving all four shares.
 5. Keep the resolver hot wallet as the **resolver** role only. It can
    call `resolve` / `draw` / `refund` / `arbiter_resolve` /
@@ -105,15 +110,21 @@ solana program show <PROGRAM_ID> --url https://api.mainnet-beta.solana.com
 
 ### Rotate admin to Squads vault
 
-Run from a key that currently holds DEFAULT_ADMIN_ROLE:
+Run from a key that currently holds the program authority:
 
 ```sh
 pnpm tsx scripts/rotate-admin.ts \
+  --chain solana \
   --new-admin <SQUADS_VAULT_PUBKEY> \
   --cluster mainnet-beta
 ```
 
-(Script TBD — bd issue: open one before mainnet ship.)
+Status:
+- The script is TBD (tracked alongside cozy-bet-aom).
+- The on-chain instruction it calls (`update_authority`) is also
+  TBD — `cozy-bet-aom` adds it.
+- Once both land, this single command rotates the authority. Until
+  then, do not run Phase 1 on mainnet.
 
 ### Change fee defaults via Squads
 
@@ -140,7 +151,9 @@ real money so we don't have to do an emergency rotation later.
 
 ## Open follow-ups
 
-- `scripts/rotate-admin.ts` script (cozy-bet-pi2 sub-task).
-- Base Safe runbook (separate doc) once we set up the Safe on Base.
-- Solidity `update_authority` / `update_treasury_owners` cheatsheet
-  for the Base side.
+- `cozy-bet-aom` — add `update_authority` to the Solana program.
+  This is **load-bearing** for Phase 1. Until it lands, admin
+  rotation on Solana is impossible without a program upgrade /
+  redeploy.
+- `scripts/rotate-admin.ts` shared between both chains (TBD).
+- Base side documented separately in `docs/safe-multisig.md`.
