@@ -3,6 +3,10 @@ import { env, allowedGuilds } from "./env.js";
 import { routeButton, routeSlash } from "./discord/interactions.js";
 import { startApi } from "./api.js";
 import { startWatchdog } from "./watchdog.js";
+import {
+  activeArbiterBetsForParticipant,
+  recordArbiterEvidence,
+} from "./flows.js";
 
 const client = new Client({
   intents: [
@@ -48,6 +52,44 @@ client.on(Events.InteractionCreate, async (i) => {
         await i.editReply({ content: `Error: ${e?.message ?? e}` });
       }
     } catch {}
+  }
+});
+
+/** DM listener: captures evidence messages for arbiter cases. Each DM the
+ *  bot receives from a user who is a participant in an arbiter-claimed bet
+ *  is appended as a bet_event with type='arbiter_evidence' so the arbiter
+ *  can review via /arbiter-review. */
+client.on(Events.MessageCreate, async (msg) => {
+  // Only react to plain user DMs to the bot.
+  if (msg.author.bot) return;
+  if (msg.guildId) return; // only DMs
+  try {
+    const bets = await activeArbiterBetsForParticipant(msg.author.id);
+    if (bets.length === 0) return;
+    // If the user is in multiple arbiter cases, attribute by shortcode mention
+    // when we can find one in the message; otherwise fall back to the most
+    // recent.
+    const matchByCode = (() => {
+      for (const b of bets) {
+        if (b.shortcode && msg.content.toUpperCase().includes(b.shortcode)) {
+          return b;
+        }
+      }
+      return null;
+    })();
+    const target = matchByCode ?? bets[0]!;
+    const attachmentUrls = msg.attachments.map((a) => a.url);
+    await recordArbiterEvidence({
+      betId: target.id,
+      fromDiscordId: msg.author.id,
+      text: msg.content,
+      attachmentUrls,
+    });
+    await msg.reply({
+      content: `✅ Recorded ${attachmentUrls.length ? `${attachmentUrls.length} attachment(s) + ` : ""}your evidence for bet \`${target.shortcode}\`. The arbiter will see it.`,
+    });
+  } catch (e) {
+    console.warn("[dm-evidence] failed:", e);
   }
 });
 

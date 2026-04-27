@@ -5,6 +5,9 @@ import {
 import {
   handleAccept,
   handleAdminResolve,
+  handleArbiterClaim,
+  handleArbiterDecide,
+  handleArbiterReview,
   handleBalance,
   handleCancel,
   handleCancelAgree,
@@ -59,6 +62,12 @@ export async function routeSlash(i: ChatInputCommandInteraction) {
       return handlePreviewTerms(i);
     case "requestarbiter":
       return handleRequestArbiter(i);
+    case "arbiter-claim":
+      return handleArbiterClaim(i);
+    case "arbiter-review":
+      return handleArbiterReview(i);
+    case "arbiter-decide":
+      return handleArbiterDecide(i);
   }
 }
 

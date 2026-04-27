@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 import { env } from "./env.js";
 import {
   type Chain,
+  chainArbiterResolve,
   chainInitializeBet,
   chainResolve,
   chainDraw,
@@ -1014,6 +1015,140 @@ export async function requestArbiter(betId: bigint, requesterId: string) {
   });
   const refreshed = await getBet(betId);
   return { alreadyRequested: false as const, bet: refreshed! };
+}
+
+/** Admin claims an open arbiter case (sets arbiter_discord_id). Idempotent
+ *  if the same admin re-claims; rejects another admin trying to take it
+ *  while it's already claimed. */
+export async function claimArbiter(betId: bigint, adminId: string) {
+  const d = db();
+  const bet = await getBet(betId);
+  if (!bet) throw new Error("bet not found");
+  if (!bet.arbiterRequestedAt) {
+    throw new Error("no arbiter request open on this bet");
+  }
+  if (bet.arbiterDiscordId && bet.arbiterDiscordId !== adminId) {
+    throw new Error(
+      `arbiter already claimed by <@${bet.arbiterDiscordId}>`,
+    );
+  }
+  if (bet.arbiterDiscordId === adminId) {
+    return { alreadyClaimed: true as const, bet };
+  }
+  await d
+    .update(bets)
+    .set({ arbiterDiscordId: adminId })
+    .where(eq(bets.id, betId));
+  await d.insert(betEvents).values({
+    betId,
+    actorDiscordId: adminId,
+    eventType: "arbiter_claimed",
+  });
+  const refreshed = await getBet(betId);
+  return { alreadyClaimed: false as const, bet: refreshed! };
+}
+
+/** Record an evidence message from a participant (sent via DM to the bot)
+ *  for a bet that has an arbiter actively assigned. */
+export async function recordArbiterEvidence(args: {
+  betId: bigint;
+  fromDiscordId: string;
+  text: string;
+  attachmentUrls?: string[];
+}) {
+  const d = db();
+  await d.insert(betEvents).values({
+    betId: args.betId,
+    actorDiscordId: args.fromDiscordId,
+    eventType: "arbiter_evidence",
+    payload: {
+      text: args.text,
+      attachments: args.attachmentUrls ?? [],
+    },
+  });
+}
+
+/** Find every bet that the given user is a participant of AND that has an
+ *  arbiter claimed (arbiter_discord_id IS NOT NULL). Used by the DM listener
+ *  to attribute incoming evidence to the right bet. */
+export async function activeArbiterBetsForParticipant(discordId: string) {
+  const d = db();
+  return d
+    .select()
+    .from(bets)
+    .where(
+      and(
+        or(eq(bets.challengerId, discordId), eq(bets.accepterId, discordId)),
+        sql`${bets.arbiterDiscordId} IS NOT NULL`,
+        sql`${bets.status} = 'disputed'`,
+      ),
+    );
+}
+
+/** List collected evidence for an arbiter's review. */
+export async function listArbiterEvidence(betId: bigint) {
+  const d = db();
+  return d
+    .select()
+    .from(betEvents)
+    .where(
+      and(
+        eq(betEvents.betId, betId),
+        eq(betEvents.eventType, "arbiter_evidence"),
+      ),
+    )
+    .orderBy(betEvents.createdAt);
+}
+
+/** Admin arbiter decides a winner. Calls arbiter_resolve on-chain which pays
+ *  the arbiter fee from the pot before settling the rest. */
+export async function arbiterDecide(args: {
+  betId: bigint;
+  adminId: string;
+  winnerDiscordId: string;
+}) {
+  const d = db();
+  const bet = await getBet(args.betId);
+  if (!bet) throw new Error("bet not found");
+  if (bet.arbiterDiscordId !== args.adminId) {
+    throw new Error("only the claiming arbiter can decide");
+  }
+  if (bet.status !== BetStatus.Disputed && bet.status !== BetStatus.Funded) {
+    throw new Error(`bet is ${bet.status}, cannot arbiter-resolve`);
+  }
+  if (
+    args.winnerDiscordId !== bet.challengerId &&
+    args.winnerDiscordId !== bet.accepterId
+  ) {
+    throw new Error("winner must be a participant");
+  }
+  const chain = bet.chain as Chain;
+  const winner = await getUser(args.winnerDiscordId);
+  const winnerWallet = userWalletForChain(winner, chain);
+  if (!winnerWallet) {
+    throw new Error(`winner has no linked ${chain} wallet`);
+  }
+  const sig = await chainArbiterResolve(chain, {
+    betId: args.betId,
+    winner: winnerWallet,
+  });
+  await d
+    .update(bets)
+    .set({
+      status: BetStatus.Resolved,
+      winnerId: args.winnerDiscordId,
+      resolutionTxSig: sig,
+      resolvedAt: new Date(),
+    })
+    .where(eq(bets.id, args.betId));
+  await d.insert(betEvents).values({
+    betId: args.betId,
+    actorDiscordId: args.adminId,
+    eventType: "arbiter_decided",
+    payload: { sig, winner: args.winnerDiscordId, by: args.adminId },
+  });
+  await bumpReliability(bet.challengerId, bet.accepterId, bet.deadline);
+  return { sig, winnerDiscordId: args.winnerDiscordId };
 }
 
 /** Counterparty rejects the cancel request → clear markers, no refund. */

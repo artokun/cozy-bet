@@ -14,6 +14,8 @@ import {
   adminResolve,
   agreeCancel,
   agreeCounter,
+  arbiterDecide,
+  claimArbiter,
   claimDraw,
   claimOpenBet,
   claimWinner,
@@ -29,6 +31,7 @@ import {
   isAllowed,
   leaderboardData,
   listActiveBetsFor,
+  listArbiterEvidence,
   proposeBet,
   proposeCounter,
   reconcileBet,
@@ -169,6 +172,34 @@ export const requestArbiterCmd = new SlashCommandBuilder()
       .setRequired(true),
   );
 
+export const arbiterClaimCmd = new SlashCommandBuilder()
+  .setName("arbiter-claim")
+  .setDescription(
+    "(admin) Claim an arbiter case and DM both participants for evidence",
+  )
+  .addStringOption((o) =>
+    o.setName("bet_id").setDescription("bet id or shortcode").setRequired(true),
+  );
+
+export const arbiterReviewCmd = new SlashCommandBuilder()
+  .setName("arbiter-review")
+  .setDescription("(admin) Review collected evidence on an arbiter case")
+  .addStringOption((o) =>
+    o.setName("bet_id").setDescription("bet id or shortcode").setRequired(true),
+  );
+
+export const arbiterDecideCmd = new SlashCommandBuilder()
+  .setName("arbiter-decide")
+  .setDescription(
+    "(admin) Decide an arbiter case — calls arbiter_resolve on-chain (pays fee from pot)",
+  )
+  .addStringOption((o) =>
+    o.setName("bet_id").setDescription("bet id or shortcode").setRequired(true),
+  )
+  .addUserOption((o) =>
+    o.setName("winner").setDescription("winning user").setRequired(true),
+  );
+
 export const reconcile = new SlashCommandBuilder()
   .setName("reconcile")
   .setDescription("(admin) Re-sync a bet's DB state from on-chain truth")
@@ -234,6 +265,9 @@ export const commandDefinitions: RESTPostAPIApplicationCommandsJSONBody[] = [
   reconcile.toJSON(),
   previewTermsCmd.toJSON(),
   requestArbiterCmd.toJSON(),
+  arbiterClaimCmd.toJSON(),
+  arbiterReviewCmd.toJSON(),
+  arbiterDecideCmd.toJSON(),
 ];
 
 export async function handleSaybet(i: ChatInputCommandInteraction) {
@@ -735,6 +769,145 @@ export async function handleRequestArbiter(i: ChatInputCommandInteraction) {
   }
 }
 
+export async function handleArbiterClaim(i: ChatInputCommandInteraction) {
+  if (!isAdmin(i.user.id)) {
+    await i.reply({ content: "Admin only.", ephemeral: true });
+    return;
+  }
+  const betIdStr = i.options.getString("bet_id", true);
+  await i.deferReply({ ephemeral: true });
+  const betId = await resolveBetIdFromInput(i, betIdStr);
+  if (betId === null) return;
+  try {
+    const result = await claimArbiter(betId, i.user.id);
+    const bet = result.bet;
+    if (result.alreadyClaimed) {
+      await i.editReply(
+        `You're already arbitrating bet \`${bet.shortcode}\`. Use \`/arbiter-review bet_id:${bet.shortcode}\` to see evidence.`,
+      );
+      return;
+    }
+    // DM both participants asking for evidence.
+    const evidencePrompt = [
+      `🛎️ <@${i.user.id}> is arbitrating your bet \`${bet.shortcode}\`.`,
+      ``,
+      `Reply to this DM with your evidence (text + image links). You have 48 hours. The arbiter will review everything before deciding.`,
+      ``,
+      `Terms:`,
+      `> ${bet.description}`,
+      bet.termsCanonical && bet.termsCanonical !== bet.description
+        ? `Canonical: ${bet.termsCanonical}`
+        : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const recipients = [bet.challengerId, bet.accepterId].filter(
+      Boolean,
+    ) as string[];
+    let dmFails = 0;
+    for (const uid of recipients) {
+      try {
+        const u = await i.client.users.fetch(uid);
+        await u.send(evidencePrompt);
+      } catch {
+        dmFails++;
+      }
+    }
+    await i.editReply(
+      `✅ Claimed arbiter case \`${bet.shortcode}\`. Both participants have been DMed for evidence (${recipients.length - dmFails}/${recipients.length} delivered). Use \`/arbiter-review\` once they respond, then \`/arbiter-decide\` to settle.`,
+    );
+    await updateAnnouncement(i.client, betId);
+  } catch (e: any) {
+    await i.editReply(`Error: ${e?.message ?? String(e)}`);
+  }
+}
+
+export async function handleArbiterReview(i: ChatInputCommandInteraction) {
+  if (!isAdmin(i.user.id)) {
+    await i.reply({ content: "Admin only.", ephemeral: true });
+    return;
+  }
+  const betIdStr = i.options.getString("bet_id", true);
+  await i.deferReply({ ephemeral: true });
+  const betId = await resolveBetIdFromInput(i, betIdStr);
+  if (betId === null) return;
+  try {
+    const bet = await getBet(betId);
+    if (!bet) {
+      await i.editReply("Bet not found.");
+      return;
+    }
+    const evidence = await listArbiterEvidence(betId);
+    const lines: string[] = [
+      `**Arbiter review** for bet \`${bet.shortcode}\` — ${bet.chain === "solana" ? "Solana" : "Base"}`,
+      `Stake: ${formatAmount(BigInt(bet.amount))} USDC each · pot ${formatAmount(BigInt(bet.amount) * 2n)} USDC`,
+      `Challenger: <@${bet.challengerId}>${bet.challengerClaimsWinner ? ` (claims winner: <@${bet.challengerClaimsWinner}>)` : ""}`,
+      `Accepter: <@${bet.accepterId ?? "?"}>${bet.accepterClaimsWinner ? ` (claims winner: <@${bet.accepterClaimsWinner}>)` : ""}`,
+      `Terms:`,
+      `> ${bet.description}`,
+      bet.termsCanonical && bet.termsCanonical !== bet.description
+        ? `Canonical: ${bet.termsCanonical}`
+        : null,
+      ``,
+      `**Evidence (${evidence.length})**`,
+    ].filter(Boolean) as string[];
+    if (evidence.length === 0) {
+      lines.push("_No evidence collected yet. Reply window may still be open._");
+    } else {
+      for (const ev of evidence) {
+        const ts = `<t:${Math.floor(new Date(ev.createdAt).getTime() / 1000)}:R>`;
+        const payload = (ev.payload ?? {}) as {
+          text?: string;
+          attachments?: string[];
+        };
+        const textBody = (payload.text ?? "").slice(0, 800);
+        const atts = payload.attachments ?? [];
+        lines.push(
+          `· ${ts} <@${ev.actorDiscordId}>: ${textBody}${atts.length ? `  [${atts.length} attachment(s): ${atts.slice(0, 3).join(", ")}]` : ""}`,
+        );
+      }
+    }
+    // Discord's content limit is 2000 — chunk if oversized.
+    const body = lines.join("\n");
+    if (body.length <= 1900) {
+      await i.editReply({ content: body });
+    } else {
+      await i.editReply({
+        content: body.slice(0, 1900) + "\n…(truncated)",
+      });
+    }
+  } catch (e: any) {
+    await i.editReply(`Error: ${e?.message ?? String(e)}`);
+  }
+}
+
+export async function handleArbiterDecide(i: ChatInputCommandInteraction) {
+  if (!isAdmin(i.user.id)) {
+    await i.reply({ content: "Admin only.", ephemeral: true });
+    return;
+  }
+  const betIdStr = i.options.getString("bet_id", true);
+  const winner = i.options.getUser("winner", true);
+  await i.deferReply();
+  const betId = await resolveBetIdFromInput(i, betIdStr);
+  if (betId === null) return;
+  try {
+    const result = await arbiterDecide({
+      betId,
+      adminId: i.user.id,
+      winnerDiscordId: winner.id,
+    });
+    const bet = await getBet(betId);
+    const url = chainExplorerTxUrl(bet?.chain as Chain, result.sig);
+    await i.editReply(
+      `⚖️ Arbiter decided. Winner: ${winner}. Tx: ${url}`,
+    );
+    await updateAnnouncement(i.client, betId);
+  } catch (e: any) {
+    await i.editReply(`Error: ${e?.message ?? String(e)}`);
+  }
+}
+
 export async function handleReconcile(i: ChatInputCommandInteraction) {
   if (!isAdmin(i.user.id)) {
     await i.reply({ content: "Admin only.", ephemeral: true });
@@ -932,7 +1105,7 @@ export async function handleHelp(i: ChatInputCommandInteraction) {
       "",
       "**Disputes**",
       "• Different winner claims → bet freezes (Disputed). Either side can `/requestarbiter <bet_id>` to escalate to an admin — costs max($100, 1% of pot) from the pot to settle.",
-      "• Admins use `/adminresolve <bet_id> @winner` to break ties.",
+      "• Admins claim cases with `/arbiter-claim`, then DM both sides for evidence, review with `/arbiter-review`, and finalize with `/arbiter-decide @winner`.",
       "",
       "**Note on bet IDs:** every bet has a 6-char shortcode like `K7M2RX` shown in the embed. Use that anywhere a `<bet_id>` is asked for.",
     ].join("\n"),
