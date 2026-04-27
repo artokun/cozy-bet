@@ -24,7 +24,10 @@
     "test:bot": "pnpm --filter @cozy-bet/bot test",
     "test:web": "pnpm --filter @cozy-bet/web test",
     "test:shared": "pnpm --filter @cozy-bet/shared test",
-    "test": "pnpm test:shared && pnpm test:bot && pnpm test:web"
+    "test": "pnpm test:shared && pnpm test:bot && pnpm test:web",
+    "typecheck:bot": "pnpm --filter @cozy-bet/bot exec tsc --noEmit",
+    "typecheck:web": "pnpm --filter @cozy-bet/web exec tsc --noEmit",
+    "typecheck": "pnpm typecheck:bot && pnpm typecheck:web"
   },
   "devDependencies": {
     "@coinbase/cdp-sdk": "^1.48.2",

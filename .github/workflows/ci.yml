@@ -25,11 +25,8 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Typecheck (bot)
-        run: pnpm --filter @cozy-bet/bot exec tsc --noEmit
-
-      - name: Typecheck (web)
-        run: pnpm --filter @cozy-bet/web exec tsc --noEmit
+      - name: Typecheck
+        run: pnpm typecheck
 
       - name: Unit tests
         # Runs the node:test suites across @cozy-bet/shared, @cozy-bet/bot,
