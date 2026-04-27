@@ -15,6 +15,7 @@ import {
 } from "./chain.js";
 import { disambig, termsHashOf } from "./llm.js";
 import { isOnTimeResolution } from "./reliability.js";
+import { formatLockSentinel } from "./locks.js";
 
 /** Determine the wallet a user has linked on a given chain. Returns null if
  *  they haven't linked one. */
@@ -138,7 +139,7 @@ export async function applyShareDiscount(args: {
   // don't leak the URL until the on-chain call confirms.
   // Sentinel embeds Date.now() so the stale-lock watchdog can detect
   // a stuck lock by age (mirrors claimResolutionLock).
-  const pendingSentinel = `PENDING:${args.tweetUrl}:${Date.now()}`;
+  const pendingSentinel = formatLockSentinel(args.tweetUrl, Date.now());
   const claimedRows = await d
     .update(bets)
     .set(
@@ -515,7 +516,7 @@ export async function initializeOnChain(betId: bigint) {
   // Same pattern as claimResolutionLock; uses init_tx_sig as the slot.
   const claimed = await d
     .update(bets)
-    .set({ initTxSig: `PENDING:initialize:${Date.now()}` })
+    .set({ initTxSig: formatLockSentinel("initialize", Date.now()) })
     .where(and(eq(bets.id, betId), isNull(bets.initTxSig)))
     .returning();
   if (claimed.length === 0) {
@@ -778,13 +779,11 @@ export async function claimDraw(betId: bigint, actorId: string) {
  */
 async function claimResolutionLock(betId: bigint, reason: string) {
   const d = db();
-  // Sentinel format: `PENDING:<reason>:<unix-ms>`. The trailing
+  // Sentinel format `PENDING:<reason>:<unix-ms>`. The trailing
   // timestamp lets the stale-lock watchdog tick distinguish a
-  // just-acquired lock from one stuck for >5 minutes (the bot crashed
-  // mid-chain-call). Without the timestamp we'd have to gate on
-  // bet.createdAt — which is the wrong column entirely (bet may be
-  // weeks old, lock just acquired).
-  const value = `PENDING:${reason}:${Date.now()}`;
+  // just-acquired lock from one stuck for >5 minutes (bot crashed
+  // mid-chain-call). See locks.ts for the parser.
+  const value = formatLockSentinel(reason, Date.now());
   const claimed = await d
     .update(bets)
     .set({ resolutionTxSig: value })

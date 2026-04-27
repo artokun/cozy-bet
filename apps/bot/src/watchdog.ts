@@ -4,6 +4,7 @@ import { getDb, bets } from "@cozy-bet/db";
 import { BetStatus } from "@cozy-bet/shared";
 import { adminDiscordIds, env } from "./env.js";
 import { refundBet } from "./flows.js";
+import { isLockStale } from "./locks.js";
 import { updateAnnouncement } from "./discord/announce.js";
 import { formatAmount } from "./discord/render.js";
 
@@ -281,27 +282,13 @@ async function tickArbiterStale(client: Client) {
  */
 const LOCK_STALE_MS = 5 * 60 * 1000;
 
-/** Sentinel format is `PENDING:<reason>:<unix-ms>`. Returns the embedded
- *  ms timestamp, or null if the value isn't a sentinel or the timestamp
- *  is unparseable. */
-function lockAcquiredAt(sentinel: string | null): number | null {
-  if (!sentinel || !sentinel.startsWith("PENDING:")) return null;
-  // Last `:`-separated segment should be the unix-ms.
-  const lastColon = sentinel.lastIndexOf(":");
-  if (lastColon === "PENDING:".length - 1) return null;
-  const raw = sentinel.slice(lastColon + 1);
-  const ms = Number(raw);
-  if (!Number.isFinite(ms) || ms <= 0) return null;
-  return ms;
-}
-
 async function tickStaleLocks() {
   const d = getDb(env.DATABASE_URL);
   const now = Date.now();
   // Pull every bet with any PENDING lock currently held. Per-row check
-  // gates on the embedded timestamp so we don't trample a just-acquired
-  // lock — bet.createdAt is the wrong column (bet may be weeks old, lock
-  // just acquired) so we can't use it.
+  // gates on the embedded timestamp (see locks.ts) so we don't trample
+  // a just-acquired lock — bet.createdAt is the wrong column (bet may
+  // be weeks old with a fresh lock).
   const candidates = await d
     .select()
     .from(bets)
@@ -310,28 +297,27 @@ async function tickStaleLocks() {
     );
   for (const b of candidates) {
     const patch: Partial<typeof bets.$inferInsert> = {};
-    const tryClear = (
-      column: keyof typeof bets.$inferInsert,
-      value: string | null,
-    ) => {
-      if (!value?.startsWith("PENDING:")) return;
-      const acquired = lockAcquiredAt(value);
-      // Missing timestamp = legacy sentinel from before the format
-      // change; treat as stale (worst case: clears a just-acquired lock
-      // mid-deploy, user retries — same UX as a chain RPC timeout).
-      if (acquired === null || now - acquired > LOCK_STALE_MS) {
-        // @ts-expect-error — typed map to a nullable string column
-        patch[column] = null;
-      }
-    };
-    tryClear("resolutionTxSig", b.resolutionTxSig);
-    tryClear("initTxSig", b.initTxSig);
-    tryClear("challengerShareUrl", b.challengerShareUrl);
-    tryClear("accepterShareUrl", b.accepterShareUrl);
-    if (Object.keys(patch).length === 0) continue;
+    const cleared: string[] = [];
+    if (isLockStale(b.resolutionTxSig, now, LOCK_STALE_MS)) {
+      patch.resolutionTxSig = null;
+      cleared.push("resolutionTxSig");
+    }
+    if (isLockStale(b.initTxSig, now, LOCK_STALE_MS)) {
+      patch.initTxSig = null;
+      cleared.push("initTxSig");
+    }
+    if (isLockStale(b.challengerShareUrl, now, LOCK_STALE_MS)) {
+      patch.challengerShareUrl = null;
+      cleared.push("challengerShareUrl");
+    }
+    if (isLockStale(b.accepterShareUrl, now, LOCK_STALE_MS)) {
+      patch.accepterShareUrl = null;
+      cleared.push("accepterShareUrl");
+    }
+    if (cleared.length === 0) continue;
     await d.update(bets).set(patch).where(eq(bets.id, b.id));
     console.warn(
-      `[watchdog] cleared stale lock(s) on bet ${b.shortcode}: ${Object.keys(patch).join(", ")}`,
+      `[watchdog] cleared stale lock(s) on bet ${b.shortcode}: ${cleared.join(", ")}`,
     );
   }
 }
