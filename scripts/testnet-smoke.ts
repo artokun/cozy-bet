@@ -219,6 +219,75 @@ async function smokeBase() {
   check("arbiterFeeBpsOfPot == 100", arbBps === 100, String(arbBps));
 }
 
+/**
+ * Verify the .env values the bot reads at runtime match the expected
+ * config baked into this smoke script. Drift is silent otherwise: bot
+ * builds transactions referencing the env addresses, the contract
+ * uses its own on-chain config, and a mismatch only surfaces as a
+ * failed `resolve` instruction at payout time.
+ *
+ * Skips a check when the env var is unset (operator running smoke
+ * locally without bot env may not have all values populated).
+ */
+function smokeEnvConsistency() {
+  console.log("\n== .env vs expected ==");
+  const looksLikeEvm = (s: string) => /^0x[0-9a-f]{40}$/i.test(s);
+  const looksLikeSolana = (s: string) =>
+    /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(s) && !looksLikeEvm(s);
+  const checkEnv = (
+    name: string,
+    expected: string,
+    chainKind: "solana" | "evm",
+  ) => {
+    const actual = process.env[name];
+    if (!actual) {
+      console.log(`  - ${name} unset (skip)`);
+      return;
+    }
+    // Shape check first — surfaces "EVM address in Solana slot" type
+    // mistakes with a clearer message than the byte-equality diff.
+    if (chainKind === "solana" && !looksLikeSolana(actual)) {
+      check(
+        `${name} matches expected`,
+        false,
+        `${actual} doesn't look like a Solana base58 pubkey (slot expects: ${expected})`,
+      );
+      return;
+    }
+    if (chainKind === "evm" && !looksLikeEvm(actual)) {
+      check(
+        `${name} matches expected`,
+        false,
+        `${actual} doesn't look like a 0x EVM address (slot expects: ${expected})`,
+      );
+      return;
+    }
+    const ok =
+      chainKind === "evm"
+        ? actual.toLowerCase() === expected.toLowerCase()
+        : actual === expected;
+    check(
+      `${name} matches expected`,
+      ok,
+      ok ? actual : `${actual} (expected ${expected})`,
+    );
+  };
+  // Solana
+  checkEnv("PROGRAM_ID", SOLANA_PROGRAM_ID, "solana");
+  checkEnv("TREASURY_OWNER_1", SOLANA_TREASURY_OWNERS[0]!, "solana");
+  checkEnv("TREASURY_OWNER_2", SOLANA_TREASURY_OWNERS[1]!, "solana");
+  checkEnv("TREASURY_OWNER_3", SOLANA_TREASURY_OWNERS[2]!, "solana");
+  checkEnv("TREASURY_OWNER_4", SOLANA_TREASURY_OWNERS[3]!, "solana");
+  // Base — checksum case varies by source; EVM kind treats the comparison as
+  // case-insensitive.
+  checkEnv("EVM_ESCROW_ADDRESS", BASE_ESCROW_ADDRESS, "evm");
+  checkEnv("EVM_USDC_ADDRESS", BASE_USDC, "evm");
+  checkEnv("EVM_TREASURY_OWNER_1", BASE_TREASURY_OWNERS[0]!, "evm");
+  checkEnv("EVM_TREASURY_OWNER_2", BASE_TREASURY_OWNERS[1]!, "evm");
+  checkEnv("EVM_TREASURY_OWNER_3", BASE_TREASURY_OWNERS[2]!, "evm");
+  checkEnv("EVM_TREASURY_OWNER_4", BASE_TREASURY_OWNERS[3]!, "evm");
+}
+
 async function main() {
   const start = Date.now();
   console.log(`testnet smoke @ ${new Date().toISOString()}\n`);
@@ -232,6 +301,12 @@ async function main() {
     await smokeBase();
   } catch (e: any) {
     console.error("Base smoke threw:", e?.message ?? e);
+    failures++;
+  }
+  try {
+    smokeEnvConsistency();
+  } catch (e: any) {
+    console.error("env consistency check threw:", e?.message ?? e);
     failures++;
   }
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
