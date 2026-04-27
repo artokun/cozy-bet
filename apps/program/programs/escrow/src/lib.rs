@@ -93,6 +93,29 @@ pub mod escrow {
         Ok(())
     }
 
+    /// Admin-only. Hand off the program authority to a new pubkey (e.g. a
+    /// Squads multisig vault). Single-step rotation: the current authority
+    /// signs, the new authority is recorded immediately. Multisig approval
+    /// gating is provided by Squads (or whatever wallet signs the tx) — the
+    /// program just verifies the *current* authority signed.
+    pub fn update_authority(
+        ctx: Context<UpdateAuthority>,
+        new_authority: Pubkey,
+    ) -> Result<()> {
+        let config = &mut ctx.accounts.config;
+        require_keys_eq!(
+            ctx.accounts.authority.key(),
+            config.authority,
+            EscrowError::UnauthorizedAdmin
+        );
+        require!(
+            new_authority != Pubkey::default(),
+            EscrowError::ZeroAddress
+        );
+        config.authority = new_authority;
+        Ok(())
+    }
+
     // ---------------------------------------------------------------
     // Lifecycle (resolver-only)
     // ---------------------------------------------------------------
@@ -658,6 +681,13 @@ pub struct InitializeConfig<'info> {
 
 #[derive(Accounts)]
 pub struct UpdateConfig<'info> {
+    #[account(mut, seeds = [b"config"], bump = config.bump)]
+    pub config: Account<'info, Config>,
+    pub authority: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct UpdateAuthority<'info> {
     #[account(mut, seeds = [b"config"], bump = config.bump)]
     pub config: Account<'info, Config>,
     pub authority: Signer<'info>,

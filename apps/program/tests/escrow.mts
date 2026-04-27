@@ -717,4 +717,82 @@ describe("escrow v2", () => {
       .amount;
     assert.equal(c2After - c2Before, BigInt(AMOUNT.toString()));
   });
+
+  it("update_authority rotates admin and rejects stale signers", async () => {
+    // Phase 1: rotate admin → fresh keypair, then verify update_config from
+    // the OLD admin fails (UnauthorizedAdmin), and from the NEW admin succeeds.
+    const newAdmin = anchor.web3.Keypair.generate();
+    // Fund newAdmin minimally so it can pay rent for any subsequent calls.
+    await provider.connection.confirmTransaction(
+      await provider.connection.requestAirdrop(
+        newAdmin.publicKey,
+        anchor.web3.LAMPORTS_PER_SOL,
+      ),
+      "confirmed",
+    );
+
+    await program.methods
+      .updateAuthority(newAdmin.publicKey)
+      .accountsPartial({
+        config: configPda,
+        authority: admin.publicKey,
+      })
+      .rpc();
+
+    const cfg1 = await program.account.config.fetch(configPda);
+    assert.equal(cfg1.authority.toBase58(), newAdmin.publicKey.toBase58());
+
+    // OLD admin can no longer call update_config.
+    let oldRejected = false;
+    try {
+      await program.methods
+        .updateConfig(null, null, null, DEFAULT_FEE_BPS, null, null, null)
+        .accountsPartial({
+          config: configPda,
+          authority: admin.publicKey,
+        })
+        .rpc();
+    } catch (e: any) {
+      oldRejected = String(e).includes("UnauthorizedAdmin");
+    }
+    assert.ok(oldRejected, "old admin should be locked out after rotation");
+
+    // NEW admin can call update_config.
+    await program.methods
+      .updateConfig(null, null, null, DEFAULT_FEE_BPS, null, null, null)
+      .accountsPartial({
+        config: configPda,
+        authority: newAdmin.publicKey,
+      })
+      .signers([newAdmin])
+      .rpc();
+
+    // Phase 2: rotate back to the original admin so the rest of the suite
+    // (and re-runs) keep working.
+    await program.methods
+      .updateAuthority(admin.publicKey)
+      .accountsPartial({
+        config: configPda,
+        authority: newAdmin.publicKey,
+      })
+      .signers([newAdmin])
+      .rpc();
+    const cfg2 = await program.account.config.fetch(configPda);
+    assert.equal(cfg2.authority.toBase58(), admin.publicKey.toBase58());
+
+    // Phase 3: zero-pubkey is rejected.
+    let zeroRejected = false;
+    try {
+      await program.methods
+        .updateAuthority(anchor.web3.PublicKey.default)
+        .accountsPartial({
+          config: configPda,
+          authority: admin.publicKey,
+        })
+        .rpc();
+    } catch (e: any) {
+      zeroRejected = String(e).includes("ZeroAddress");
+    }
+    assert.ok(zeroRejected, "zero pubkey should be rejected");
+  });
 });
