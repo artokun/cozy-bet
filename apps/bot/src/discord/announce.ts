@@ -13,6 +13,7 @@ import { eq } from "drizzle-orm";
 import { env } from "../env.js";
 import { formatAmount } from "./render.js";
 import { chainExplorerTxUrl, type Chain } from "../chain.js";
+import { isRealTxSig } from "../explorer.js";
 
 const STATUS_COLORS: Record<string, number> = {
   proposed: 0x5b8cff,
@@ -89,7 +90,7 @@ export async function updateAnnouncement(client: Client, betId: bigint) {
       inline: true,
     });
   }
-  if (bet.resolutionTxSig) {
+  if (isRealTxSig(bet.resolutionTxSig)) {
     embed.addFields({
       name: "Tx",
       value: `[explorer](${chainExplorerTxUrl(chain, bet.resolutionTxSig)})`,

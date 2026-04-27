@@ -146,7 +146,7 @@ export default async function ExplorerPage() {
                   <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
                     {fmtTime(b.createdAt)}
                     {b.resolvedAt && ` → resolved ${fmtTime(b.resolvedAt)}`}
-                    {b.resolutionTxSig && (
+                    {b.resolutionTxSig && !b.resolutionTxSig.startsWith("PENDING:") && (
                       <>
                         {" · "}
                         <a

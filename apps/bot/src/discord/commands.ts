@@ -13,6 +13,7 @@ import {
 } from "discord.js";
 import { formatAmount, formatBet, renderBetCard } from "./render.js";
 import { chainExplorerTxUrl, type Chain } from "../chain.js";
+import { isRealTxSig } from "../explorer.js";
 import {
   acceptBet,
   adminResolve,
@@ -863,7 +864,7 @@ export async function handleRequestArbiter(i: ChatInputCommandInteraction) {
 
       // DM every admin so the case lands in their inbox immediately.
       const admins = adminDiscordIds();
-      const txLink = bet.resolutionTxSig
+      const txLink = isRealTxSig(bet.resolutionTxSig)
         ? chainExplorerTxUrl(bet.chain as Chain, bet.resolutionTxSig)
         : null;
       const dmBody = [
@@ -1159,7 +1160,7 @@ export async function handleStatus(i: ChatInputCommandInteraction) {
   if (bet.winnerId) {
     lines.push(`Winner: <@${bet.winnerId}>`);
   }
-  if (bet.resolutionTxSig) {
+  if (isRealTxSig(bet.resolutionTxSig)) {
     lines.push(
       `Tx: [explorer](${chainExplorerTxUrl(bet.chain as Chain, bet.resolutionTxSig)})`,
     );
@@ -1663,7 +1664,7 @@ async function sendResolutionDms(
   const bet = await getBet(betId);
   if (!bet) return;
   const winner = bet.winnerId ? `<@${bet.winnerId}>` : "(unknown)";
-  const txLink = bet.resolutionTxSig
+  const txLink = isRealTxSig(bet.resolutionTxSig)
     ? chainExplorerTxUrl(bet.chain as Chain, bet.resolutionTxSig)
     : null;
   const lines = [

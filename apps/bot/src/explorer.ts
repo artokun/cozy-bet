@@ -39,3 +39,14 @@ export function explorerTxUrlFor(
     ? solanaExplorerTxUrl(cluster, sig)
     : baseExplorerTxUrl(network, sig);
 }
+
+/**
+ * True if `sig` is a real on-chain tx hash, false if it's a brief
+ * "PENDING:<reason>" lock sentinel written by claimResolutionLock /
+ * initializeOnChain. UI surfaces (announce embed, /status, resolution
+ * DMs) should hide the explorer link while sig is PENDING, since the
+ * URL would 404 — the lock window is 1-3s for Solana, longer for EVM.
+ */
+export function isRealTxSig(sig: string | null | undefined): sig is string {
+  return Boolean(sig) && !sig!.startsWith("PENDING:");
+}
