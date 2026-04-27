@@ -280,33 +280,54 @@ async function tickArbiterStale(client: Client) {
  * slow-but-still-running call.
  */
 const LOCK_STALE_MS = 5 * 60 * 1000;
+
+/** Sentinel format is `PENDING:<reason>:<unix-ms>`. Returns the embedded
+ *  ms timestamp, or null if the value isn't a sentinel or the timestamp
+ *  is unparseable. */
+function lockAcquiredAt(sentinel: string | null): number | null {
+  if (!sentinel || !sentinel.startsWith("PENDING:")) return null;
+  // Last `:`-separated segment should be the unix-ms.
+  const lastColon = sentinel.lastIndexOf(":");
+  if (lastColon === "PENDING:".length - 1) return null;
+  const raw = sentinel.slice(lastColon + 1);
+  const ms = Number(raw);
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  return ms;
+}
+
 async function tickStaleLocks() {
   const d = getDb(env.DATABASE_URL);
-  const cutoff = new Date(Date.now() - LOCK_STALE_MS);
-  // Find any bet whose lock sentinel might be stuck. We can't filter by
-  // PENDING:* in the WHERE clause without a string LIKE; cheaper to
-  // fetch by updatedAt heuristic — bets that haven't transitioned in
-  // >5min and still have a PENDING value are stuck.
-  //
-  // resolved_at is a tighter signal: if resolved_at IS NOT NULL the bet
-  // is settled; if resolution_tx_sig starts with PENDING and resolved_at
-  // is NULL and createdAt is older than the cutoff, the lock is stale.
-  const stuck = await d
+  const now = Date.now();
+  // Pull every bet with any PENDING lock currently held. Per-row check
+  // gates on the embedded timestamp so we don't trample a just-acquired
+  // lock — bet.createdAt is the wrong column (bet may be weeks old, lock
+  // just acquired) so we can't use it.
+  const candidates = await d
     .select()
     .from(bets)
     .where(
-      and(
-        sql`(${bets.resolutionTxSig} LIKE 'PENDING:%' OR ${bets.initTxSig} LIKE 'PENDING:%' OR ${bets.challengerShareUrl} LIKE 'PENDING:%' OR ${bets.accepterShareUrl} LIKE 'PENDING:%')`,
-        lt(bets.createdAt, cutoff),
-        isNull(bets.resolvedAt),
-      ),
+      sql`(${bets.resolutionTxSig} LIKE 'PENDING:%' OR ${bets.initTxSig} LIKE 'PENDING:%' OR ${bets.challengerShareUrl} LIKE 'PENDING:%' OR ${bets.accepterShareUrl} LIKE 'PENDING:%')`,
     );
-  for (const b of stuck) {
+  for (const b of candidates) {
     const patch: Partial<typeof bets.$inferInsert> = {};
-    if (b.resolutionTxSig?.startsWith("PENDING:")) patch.resolutionTxSig = null;
-    if (b.initTxSig?.startsWith("PENDING:")) patch.initTxSig = null;
-    if (b.challengerShareUrl?.startsWith("PENDING:")) patch.challengerShareUrl = null;
-    if (b.accepterShareUrl?.startsWith("PENDING:")) patch.accepterShareUrl = null;
+    const tryClear = (
+      column: keyof typeof bets.$inferInsert,
+      value: string | null,
+    ) => {
+      if (!value?.startsWith("PENDING:")) return;
+      const acquired = lockAcquiredAt(value);
+      // Missing timestamp = legacy sentinel from before the format
+      // change; treat as stale (worst case: clears a just-acquired lock
+      // mid-deploy, user retries — same UX as a chain RPC timeout).
+      if (acquired === null || now - acquired > LOCK_STALE_MS) {
+        // @ts-expect-error — typed map to a nullable string column
+        patch[column] = null;
+      }
+    };
+    tryClear("resolutionTxSig", b.resolutionTxSig);
+    tryClear("initTxSig", b.initTxSig);
+    tryClear("challengerShareUrl", b.challengerShareUrl);
+    tryClear("accepterShareUrl", b.accepterShareUrl);
     if (Object.keys(patch).length === 0) continue;
     await d.update(bets).set(patch).where(eq(bets.id, b.id));
     console.warn(

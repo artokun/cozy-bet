@@ -136,7 +136,9 @@ export async function applyShareDiscount(args: {
   // affected rows and aborts before the on-chain setFeeBpsForSide fires.
   // Use a sentinel ("PENDING:<nonce>") rather than the final URL so we
   // don't leak the URL until the on-chain call confirms.
-  const pendingSentinel = `PENDING:${args.tweetUrl}`;
+  // Sentinel embeds Date.now() so the stale-lock watchdog can detect
+  // a stuck lock by age (mirrors claimResolutionLock).
+  const pendingSentinel = `PENDING:${args.tweetUrl}:${Date.now()}`;
   const claimedRows = await d
     .update(bets)
     .set(
@@ -513,7 +515,7 @@ export async function initializeOnChain(betId: bigint) {
   // Same pattern as claimResolutionLock; uses init_tx_sig as the slot.
   const claimed = await d
     .update(bets)
-    .set({ initTxSig: "PENDING:initialize" })
+    .set({ initTxSig: `PENDING:initialize:${Date.now()}` })
     .where(and(eq(bets.id, betId), isNull(bets.initTxSig)))
     .returning();
   if (claimed.length === 0) {
@@ -776,9 +778,16 @@ export async function claimDraw(betId: bigint, actorId: string) {
  */
 async function claimResolutionLock(betId: bigint, reason: string) {
   const d = db();
+  // Sentinel format: `PENDING:<reason>:<unix-ms>`. The trailing
+  // timestamp lets the stale-lock watchdog tick distinguish a
+  // just-acquired lock from one stuck for >5 minutes (the bot crashed
+  // mid-chain-call). Without the timestamp we'd have to gate on
+  // bet.createdAt — which is the wrong column entirely (bet may be
+  // weeks old, lock just acquired).
+  const value = `PENDING:${reason}:${Date.now()}`;
   const claimed = await d
     .update(bets)
-    .set({ resolutionTxSig: `PENDING:${reason}` })
+    .set({ resolutionTxSig: value })
     .where(and(eq(bets.id, betId), isNull(bets.resolutionTxSig)))
     .returning();
   if (claimed.length === 0) {
