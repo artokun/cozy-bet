@@ -7,11 +7,14 @@
  *
  * If X_BEARER_TOKEN is unset, isConfigured() returns false and the caller
  * should reject /confirm-share rather than trust user-submitted URLs.
+ *
+ * Note: env access is deliberately lazy (read inside each function) so the
+ * module-level import of this file doesn't trigger zod validation of the
+ * full bot env schema. That keeps parseTweetId trivially testable.
  */
-import { env } from "./env.js";
 
 export function isConfigured(): boolean {
-  return Boolean(env.X_BEARER_TOKEN);
+  return Boolean(process.env.X_BEARER_TOKEN);
 }
 
 export type TweetCheckResult =
@@ -27,14 +30,15 @@ export function parseTweetId(url: string): string | null {
 }
 
 export async function fetchTweet(tweetId: string): Promise<TweetCheckResult> {
-  if (!env.X_BEARER_TOKEN) {
+  const bearer = process.env.X_BEARER_TOKEN;
+  if (!bearer) {
     return { ok: false, reason: "X_BEARER_TOKEN not configured" };
   }
   const url = `https://api.x.com/2/tweets/${encodeURIComponent(tweetId)}?expansions=author_id&user.fields=username&tweet.fields=text`;
   let res: Response;
   try {
     res = await fetch(url, {
-      headers: { Authorization: `Bearer ${env.X_BEARER_TOKEN}` },
+      headers: { Authorization: `Bearer ${bearer}` },
     });
   } catch (e: unknown) {
     return {

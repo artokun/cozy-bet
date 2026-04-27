@@ -51,15 +51,13 @@ const DEFAULT_DUNKS: Dunk[] = [
   },
 ];
 
-let _cache: Dunk[] | null = null;
-
-export function getDunks(): Dunk[] {
-  if (_cache) return _cache;
-  const raw = process.env.DUNK_GIFS;
-  if (!raw) {
-    _cache = DEFAULT_DUNKS;
-    return _cache;
-  }
+/** Parse the DUNK_GIFS env var format: newline-delimited "url|label" lines.
+ *  Empty lines and lines without a url are skipped. Missing label defaults
+ *  to "GIF". Returns null if the input is empty or yields no parseable
+ *  entries — caller falls back to DEFAULT_DUNKS. Pure function, no env
+ *  access — testable. */
+export function parseDunkEnv(raw: string | null | undefined): Dunk[] | null {
+  if (!raw) return null;
   const parsed = raw
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -70,6 +68,19 @@ export function getDunks(): Dunk[] {
       return { url, label: label || "GIF" } as Dunk;
     })
     .filter((d): d is Dunk => d !== null);
-  _cache = parsed.length > 0 ? parsed : DEFAULT_DUNKS;
+  return parsed.length > 0 ? parsed : null;
+}
+
+let _cache: Dunk[] | null = null;
+
+export function getDunks(): Dunk[] {
+  if (_cache) return _cache;
+  _cache = parseDunkEnv(process.env.DUNK_GIFS) ?? DEFAULT_DUNKS;
   return _cache;
+}
+
+/** Reset the module-level cache. Test-only — production code never needs
+ *  this since DUNK_GIFS doesn't change between bot restarts. */
+export function _resetCacheForTests(): void {
+  _cache = null;
 }

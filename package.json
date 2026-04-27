@@ -20,7 +20,10 @@
     "testnet:smoke": "tsx scripts/testnet-smoke.ts",
     "testnet:lifecycle:solana": "tsx scripts/testnet-lifecycle-solana.ts",
     "testnet:lifecycle:base": "tsx scripts/testnet-lifecycle-base.ts",
-    "ops:rotate-admin": "tsx scripts/rotate-admin.ts"
+    "ops:rotate-admin": "tsx scripts/rotate-admin.ts",
+    "test:bot": "pnpm --filter @cozy-bet/bot test",
+    "test:web": "pnpm --filter @cozy-bet/web test",
+    "test": "pnpm test:bot && pnpm test:web"
   },
   "devDependencies": {
     "@coinbase/cdp-sdk": "^1.48.2",
