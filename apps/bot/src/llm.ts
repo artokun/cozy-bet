@@ -82,11 +82,7 @@ export async function disambig(args: {
   return { kind: "ok", canonical: text };
 }
 
-/** keccak256 of the canonical sentence (UTF-8) — what we commit on-chain
- *  in initialize_bet's terms_hash arg. Both parties EIP-712 sign the
- *  same canonical sentence off-chain; matching hashes prove the contract
- *  binding matches what they signed. */
-import { keccak_256 } from "@noble/hashes/sha3.js";
-export function termsHashOf(canonical: string): Uint8Array {
-  return keccak_256(new TextEncoder().encode(canonical));
-}
+// termsHashOf moved to ./terms.js so test files can import it without
+// pulling in the Anthropic client + env validation. Re-export here for
+// callers that already import from llm.js.
+export { termsHashOf } from "./terms.js";
