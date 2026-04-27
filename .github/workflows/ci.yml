@@ -28,6 +28,12 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: DB schema drift check
+        # Fails if schema.ts has changes that haven't been generated into
+        # a migration. Catches the silent "added a column without
+        # generating" mistake before it ships.
+        run: pnpm db:check-schema
+
       - name: Unit tests
         # Runs the node:test suites across @cozy-bet/shared, @cozy-bet/bot,
         # and @cozy-bet/web. No DB / Discord / on-chain mocks needed —
