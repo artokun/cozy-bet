@@ -18,14 +18,34 @@ import { env } from "./env.js";
 
 // Addresses configured at module load. Throwing here would crash at import,
 // so we lazy-error in `assertConfigured()` when an EVM bet is actually used.
+
+/** Reject env values that are present but obviously wrong-shape (e.g. a
+ *  base58 Solana pubkey pasted into an EVM slot). Returns the value as
+ *  Address if valid, throws if present-but-malformed, returns null if
+ *  unset (the lazy isConfigured gate covers the unset case). */
+function envEvmAddress(envName: string, value: string | undefined): Address | null {
+  if (!value) return null;
+  if (!/^0x[0-9a-f]{40}$/i.test(value)) {
+    const msg = `❌ env.${envName} is not a valid 0x EVM address: ${value}`;
+    console.error(msg);
+    if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value)) {
+      console.error(
+        `   That looks like a Solana base58 pubkey. EVM env vars (EVM_ESCROW_ADDRESS, EVM_USDC_ADDRESS, EVM_TREASURY_OWNER_*) want 0x... — see .env.example.`,
+      );
+    }
+    throw new Error(msg);
+  }
+  return value as Address;
+}
+
 const RESOLVER_PRIVATE_KEY = env.RESOLVER_PRIVATE_KEY;
-const ESCROW_ADDRESS = env.EVM_ESCROW_ADDRESS;
-const USDC_ADDRESS = env.EVM_USDC_ADDRESS;
-const TREASURY_OWNERS: Address[] = [
-  env.EVM_TREASURY_OWNER_1 as Address,
-  env.EVM_TREASURY_OWNER_2 as Address,
-  env.EVM_TREASURY_OWNER_3 as Address,
-  env.EVM_TREASURY_OWNER_4 as Address,
+const ESCROW_ADDRESS = envEvmAddress("EVM_ESCROW_ADDRESS", env.EVM_ESCROW_ADDRESS);
+const USDC_ADDRESS = envEvmAddress("EVM_USDC_ADDRESS", env.EVM_USDC_ADDRESS);
+const TREASURY_OWNERS: (Address | null)[] = [
+  envEvmAddress("EVM_TREASURY_OWNER_1", env.EVM_TREASURY_OWNER_1),
+  envEvmAddress("EVM_TREASURY_OWNER_2", env.EVM_TREASURY_OWNER_2),
+  envEvmAddress("EVM_TREASURY_OWNER_3", env.EVM_TREASURY_OWNER_3),
+  envEvmAddress("EVM_TREASURY_OWNER_4", env.EVM_TREASURY_OWNER_4),
 ];
 const CHAIN = env.EVM_NETWORK === "base" ? baseMainnet : baseSepolia;
 
