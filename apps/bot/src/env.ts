@@ -75,6 +75,20 @@ const schema = z.object({
     .string()
     .default("true")
     .transform((v) => v === "true"),
+
+  /** X (Twitter) bearer token for /share verification. Optional; if unset
+   *  the /confirm-share command rejects with a "verification disabled" msg
+   *  rather than trusting the user's submitted URL. */
+  X_BEARER_TOKEN: z.string().optional(),
+  /** Hashtag /share-d tweets must contain to qualify for the discount.
+   *  Default '#cozybet'. Verified case-insensitively. */
+  SHARE_HASHTAG: z.string().default("#cozybet"),
+  /** Discounted per-side fee bps after a verified share. Default 150
+   *  matches the contract's MIN_DISCOUNTED_FEE_BPS floor. */
+  SHARE_DISCOUNT_BPS: z
+    .string()
+    .default("150")
+    .transform((v) => parseInt(v, 10)),
 });
 
 export const env = schema.parse(process.env);

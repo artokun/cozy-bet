@@ -45,6 +45,9 @@ export const users = pgTable("users", {
    *  `${good}/${events}` ratio on /saybet challenge embed + /status. */
   resolveEvents: bigint("resolve_events", { mode: "number" }).notNull().default(0),
   resolveScoreGood: bigint("resolve_score_good", { mode: "number" }).notNull().default(0),
+  /** Self-attested X (Twitter) handle, no leading @. Set via /linktwitter.
+   *  Used by /confirm-share to check the verified tweet's author matches. */
+  xHandle: text("x_handle"),
 });
 
 export const bets = pgTable(
@@ -96,6 +99,11 @@ export const bets = pgTable(
      *  the bot posts the celebration in the bet's channel. */
     dunkGifUrl: text("dunk_gif_url"),
     dunkPostedAt: timestamp("dunk_posted_at", { withTimezone: true }),
+    /** Per-side X (Twitter) share URLs. Set when /confirm-share verifies a
+     *  tweet and the bot calls setFeeBpsForSide on-chain to discount that
+     *  side's fee. Used for audit + de-dup so a side can't redeem twice. */
+    challengerShareUrl: text("challenger_share_url"),
+    accepterShareUrl: text("accepter_share_url"),
     /** Single-round counter-proposal. Either party can /counter while the bet
      *  is still in 'proposed' state. Other party gets Agree/Deny buttons.
      *  On Agree → update amount/description, clear counter_*, bet stays

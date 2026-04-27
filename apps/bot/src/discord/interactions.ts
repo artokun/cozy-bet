@@ -11,6 +11,7 @@ import {
   handleArbiterReview,
   handleBalance,
   handleCancel,
+  handleConfirmShare,
   handleCancelAgree,
   handleCancelDeny,
   handleCounter,
@@ -22,8 +23,10 @@ import {
   handleDunkSelect,
   handleHelp,
   handleLeaderboard,
+  handleLinkTwitter,
   handleLinkWallet,
   handleMyBets,
+  handleShare,
   handleOpenBets,
   handlePreviewTerms,
   handleReconcile,
@@ -51,6 +54,12 @@ export async function routeSlash(i: ChatInputCommandInteraction) {
       return handleCounter(i);
     case "linkwallet":
       return handleLinkWallet(i);
+    case "linktwitter":
+      return handleLinkTwitter(i);
+    case "share":
+      return handleShare(i);
+    case "confirm-share":
+      return handleConfirmShare(i);
     case "balance":
       return handleBalance(i);
     case "help":

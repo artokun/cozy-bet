@@ -18,6 +18,7 @@ import {
   adminResolve,
   agreeCancel,
   agreeCounter,
+  applyShareDiscount,
   arbiterDecide,
   claimArbiter,
   claimDraw,
@@ -45,9 +46,11 @@ import {
   requestCancel,
   setAnnounceMessageId,
   setDunkGif,
+  setUserXHandle,
 } from "../flows.js";
+import { adminDiscordIds, env, isAdmin } from "../env.js";
+import * as x from "../x.js";
 import { getDunks } from "../dunks.js";
-import { adminDiscordIds, isAdmin } from "../env.js";
 import { connection, mockUsdcMint } from "../solana.js";
 import * as evm from "../evm.js";
 import { safeChannelSend, updateAnnouncement } from "./announce.js";
@@ -146,6 +149,41 @@ export const counterCmd = new SlashCommandBuilder()
       .setName("description")
       .setDescription("new bet description")
       .setMaxLength(200),
+  );
+
+export const linkTwitterCmd = new SlashCommandBuilder()
+  .setName("linktwitter")
+  .setDescription("Link your X (Twitter) handle for share discounts")
+  .addStringOption((o) =>
+    o
+      .setName("handle")
+      .setDescription("your X handle (no @)")
+      .setRequired(true)
+      .setMaxLength(15),
+  );
+
+export const shareCmd = new SlashCommandBuilder()
+  .setName("share")
+  .setDescription(
+    "Get a prefilled tweet for a bet — confirming earns 250→150bps fee discount",
+  )
+  .addStringOption((o) =>
+    o.setName("bet_id").setDescription("bet id or shortcode").setRequired(true),
+  );
+
+export const confirmShareCmd = new SlashCommandBuilder()
+  .setName("confirm-share")
+  .setDescription(
+    "Verify your /share tweet to claim the fee discount on your side",
+  )
+  .addStringOption((o) =>
+    o.setName("bet_id").setDescription("bet id or shortcode").setRequired(true),
+  )
+  .addStringOption((o) =>
+    o
+      .setName("tweet_url")
+      .setDescription("URL of the tweet you posted")
+      .setRequired(true),
   );
 
 export const linkwallet = new SlashCommandBuilder()
@@ -269,6 +307,9 @@ export const commandDefinitions: RESTPostAPIApplicationCommandsJSONBody[] = [
   counterCmd.toJSON(),
   cancelCmd.toJSON(),
   linkwallet.toJSON(),
+  linkTwitterCmd.toJSON(),
+  shareCmd.toJSON(),
+  confirmShareCmd.toJSON(),
   balanceCmd.toJSON(),
   helpCmd.toJSON(),
   statusCmd.toJSON(),
@@ -1146,6 +1187,7 @@ export async function handleHelp(i: ChatInputCommandInteraction) {
       "• `/resolve <bet_id> @winner` — claim a winner",
       "• `/draw <bet_id>` — both agree it's a tie",
       "• `/cancel <bet_id>` — request mutual cancel (counterparty must agree)",
+      "• `/share <bet_id>` — get a prefilled tweet (post + `/confirm-share` to drop your fee from 250→150bps)",
       "",
       "**Info commands**",
       "• `/status <bet_id>` — full detail on a bet",
@@ -1236,6 +1278,134 @@ export async function handleBalance(i: ChatInputCommandInteraction) {
   }
 
   await i.editReply({ content: lines.join("\n") });
+}
+
+export async function handleLinkTwitter(i: ChatInputCommandInteraction) {
+  const handle = i.options
+    .getString("handle", true)
+    .trim()
+    .replace(/^@/, "");
+  if (!/^[A-Za-z0-9_]{1,15}$/.test(handle)) {
+    await i.reply({
+      content:
+        "That doesn't look like a valid X handle (1–15 chars, letters/digits/underscore).",
+      ephemeral: true,
+    });
+    return;
+  }
+  await setUserXHandle(i.user.id, handle);
+  await i.reply({
+    content: `✅ Linked X handle: \`@${handle}\`. Use \`/share\` on a bet to claim a fee discount.`,
+    ephemeral: true,
+  });
+}
+
+export async function handleShare(i: ChatInputCommandInteraction) {
+  const betIdStr = i.options.getString("bet_id", true);
+  await i.deferReply({ ephemeral: true });
+  const betId = await resolveBetIdFromInput(i, betIdStr);
+  if (betId === null) return;
+  const bet = await getBet(betId);
+  if (!bet) return;
+  if (i.user.id !== bet.challengerId && i.user.id !== bet.accepterId) {
+    await i.editReply("You're not a participant in this bet.");
+    return;
+  }
+  const stake = formatAmount(BigInt(bet.amount));
+  const chainLabel = bet.chain === "solana" ? "Solana" : "Base";
+  const betLink = `${env.WEB_PUBLIC_URL}/bet/${bet.id}`;
+  const tweetText = `I just took a bet for ${stake} USDC on cozy-bet (${chainLabel}) ${env.SHARE_HASHTAG}\n\n"${bet.description.slice(0, 200)}"\n\n${betLink}`;
+  const intentUrl = `https://x.com/intent/tweet?text=${encodeURIComponent(tweetText)}`;
+  const lines = [
+    `**Share bet \`${bet.shortcode}\`** to claim a fee discount on your side (${env.BET_FEE_BPS}→${env.SHARE_DISCOUNT_BPS}bps).`,
+    "",
+    `1. Tap to compose: ${intentUrl}`,
+    `2. Post the tweet (must include ${env.SHARE_HASHTAG}).`,
+    `3. Run \`/confirm-share bet_id:${bet.shortcode} tweet_url:<paste>\` to verify.`,
+  ];
+  if (!x.isConfigured()) {
+    lines.push(
+      "",
+      "⚠️ Verification is currently disabled (admin needs to set X_BEARER_TOKEN). Posting won't grant a discount yet — but you can still share if you like.",
+    );
+  }
+  const me = await getUser(i.user.id);
+  if (!me?.xHandle) {
+    lines.push(
+      "",
+      "ℹ️ Run `/linktwitter handle:<your-handle>` first so we know which X account to verify.",
+    );
+  }
+  await i.editReply({ content: lines.join("\n") });
+}
+
+export async function handleConfirmShare(i: ChatInputCommandInteraction) {
+  const betIdStr = i.options.getString("bet_id", true);
+  const tweetUrl = i.options.getString("tweet_url", true).trim();
+  await i.deferReply({ ephemeral: true });
+  const betId = await resolveBetIdFromInput(i, betIdStr);
+  if (betId === null) return;
+  if (!x.isConfigured()) {
+    await i.editReply(
+      "Share verification is disabled (admin needs to add `X_BEARER_TOKEN` to the bot env).",
+    );
+    return;
+  }
+  const me = await getUser(i.user.id);
+  if (!me?.xHandle) {
+    await i.editReply(
+      "Run `/linktwitter handle:<your-handle>` first so we know which account to verify.",
+    );
+    return;
+  }
+  const bet = await getBet(betId);
+  if (!bet) {
+    await i.editReply("Bet not found.");
+    return;
+  }
+  if (i.user.id !== bet.challengerId && i.user.id !== bet.accepterId) {
+    await i.editReply("You're not a participant in this bet.");
+    return;
+  }
+  const myWallet =
+    bet.chain === "solana" ? me.walletPubkey : me.evmAddress;
+  if (!myWallet) {
+    const which = bet.chain === "solana" ? "Solana" : "Base";
+    await i.editReply(
+      `You haven't linked a ${which} wallet — run \`/linkwallet chain:${bet.chain}\` first.`,
+    );
+    return;
+  }
+  const verify = await x.verifyShareTweet({
+    tweetUrl,
+    expectedHandle: me.xHandle,
+    requiredHashtag: env.SHARE_HASHTAG,
+  });
+  if (!verify.ok) {
+    await i.editReply(`Couldn't verify that tweet: ${verify.reason}`);
+    return;
+  }
+  try {
+    const result = await applyShareDiscount({
+      betId,
+      participantId: i.user.id,
+      participantWallet: myWallet,
+      tweetUrl,
+      newBps: env.SHARE_DISCOUNT_BPS,
+    });
+    if (result.alreadyApplied) {
+      await i.editReply(
+        `You already redeemed a share discount on this bet: ${result.url}`,
+      );
+      return;
+    }
+    const txUrl = chainExplorerTxUrl(bet.chain as Chain, result.sig);
+    await i.editReply(
+      `✅ Verified ${tweetUrl} — your fee on bet \`${bet.shortcode}\` is now ${env.SHARE_DISCOUNT_BPS}bps. Tx: ${txUrl}`,
+    );
+  } catch (e: any) {
+    await i.editReply(`Error applying discount: ${e?.message ?? String(e)}`);
+  }
 }
 
 export async function handleLinkWallet(i: ChatInputCommandInteraction) {

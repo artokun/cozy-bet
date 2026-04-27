@@ -11,6 +11,7 @@ import {
   chainDraw,
   chainRefund,
   chainFetchBet,
+  chainSetFeeBpsForSide,
 } from "./chain.js";
 import { disambig, termsHashOf } from "./llm.js";
 
@@ -67,6 +68,78 @@ export async function setUserWallet(discordId: string, walletPubkey: string) {
       preferredChain: existing?.preferredChain ?? "solana",
     })
     .where(eq(users.discordId, discordId));
+}
+
+/** Save the user's self-attested X (Twitter) handle. No leading '@'. */
+export async function setUserXHandle(discordId: string, xHandle: string) {
+  const d = db();
+  await upsertUser(discordId);
+  await d
+    .update(users)
+    .set({ xHandle: xHandle.replace(/^@/, "") })
+    .where(eq(users.discordId, discordId));
+}
+
+/** Apply a verified /share discount: record the tweet URL on the bet for the
+ *  caller's side AND call setFeeBpsForSide on-chain to drop their fee bps to
+ *  the configured discount (default 150). Idempotent — re-running returns the
+ *  existing url without re-firing the on-chain call. */
+export async function applyShareDiscount(args: {
+  betId: bigint;
+  participantId: string;
+  participantWallet: string;
+  tweetUrl: string;
+  newBps: number;
+}) {
+  const d = db();
+  const bet = await getBet(args.betId);
+  if (!bet) throw new Error("bet not found");
+  if (
+    args.participantId !== bet.challengerId &&
+    args.participantId !== bet.accepterId
+  ) {
+    throw new Error("not a participant");
+  }
+  const isChallenger = args.participantId === bet.challengerId;
+  const existing = isChallenger
+    ? bet.challengerShareUrl
+    : bet.accepterShareUrl;
+  if (existing) {
+    return { alreadyApplied: true as const, url: existing };
+  }
+  // Discounts only make sense before the bet pays out — after Resolved/Drawn
+  // the fee bps are already baked into the resolve tx. Pre-Funded is fine
+  // (the bps is read at resolve time, not deposit time).
+  if (
+    bet.status !== BetStatus.Proposed &&
+    bet.status !== BetStatus.Accepted &&
+    bet.status !== BetStatus.Pending &&
+    bet.status !== BetStatus.Funded
+  ) {
+    throw new Error(
+      `bet is ${bet.status} — discount can only be applied before resolve`,
+    );
+  }
+  const sig = await chainSetFeeBpsForSide(bet.chain as Chain, {
+    betId: args.betId,
+    side: args.participantWallet,
+    newBps: args.newBps,
+  });
+  await d
+    .update(bets)
+    .set(
+      isChallenger
+        ? { challengerShareUrl: args.tweetUrl }
+        : { accepterShareUrl: args.tweetUrl },
+    )
+    .where(eq(bets.id, args.betId));
+  await d.insert(betEvents).values({
+    betId: args.betId,
+    actorDiscordId: args.participantId,
+    eventType: "share_verified",
+    payload: { url: args.tweetUrl, side: isChallenger ? "challenger" : "accepter", newBps: args.newBps, sig },
+  });
+  return { alreadyApplied: false as const, url: args.tweetUrl, sig };
 }
 
 /** Link an EVM address to a discord user. Mirrors setUserWallet for Base. */
