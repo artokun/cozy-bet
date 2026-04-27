@@ -86,7 +86,19 @@ export function formatBet(b: {
   amount: bigint;
   status: string;
   shortcode?: string;
+  /** Pending state badges: surface mid-flight workflows so a user reading
+   *  /mybets sees "your cancel request awaits agreement" without needing
+   *  to /status every bet. All optional — narrow callers (formatBet
+   *  outside of mybets) can pass plain shape. */
+  counterAt?: Date | null;
+  cancelRequestedAt?: Date | null;
+  arbiterRequestedAt?: Date | null;
 }): string {
   const idLabel = b.shortcode ?? `#${b.id}`;
-  return `• ${idLabel} — ${formatAmount(b.amount)} USDC — ${b.description} — _${b.status}_`;
+  const badges: string[] = [];
+  if (b.counterAt) badges.push("📝 counter-proposed");
+  if (b.cancelRequestedAt) badges.push("🚫 cancel requested");
+  if (b.arbiterRequestedAt) badges.push("🛎️ arbiter requested");
+  const badgeStr = badges.length > 0 ? ` · ${badges.join(" · ")}` : "";
+  return `• ${idLabel} — ${formatAmount(b.amount)} USDC — ${b.description} — _${b.status}_${badgeStr}`;
 }
