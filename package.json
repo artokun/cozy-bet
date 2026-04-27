@@ -16,6 +16,7 @@
     "program:test": "pnpm --filter @cozy-bet/program test",
     "program:test:local": "pnpm --filter @cozy-bet/program test:local",
     "program:deploy": "pnpm --filter @cozy-bet/program deploy",
+    "program:idl-check-sync": "pnpm --filter @cozy-bet/program idl:check-sync",
     "contracts:build": "pnpm --filter @cozy-bet/contracts build",
     "contracts:test": "pnpm --filter @cozy-bet/contracts test",
     "testnet:smoke": "tsx scripts/testnet-smoke.ts",

@@ -4,12 +4,13 @@
   "private": true,
   "type": "commonjs",
   "scripts": {
-    "build": "anchor build",
-    "test": "anchor test --skip-local-validator --provider.cluster devnet",
-    "test:local": "anchor test",
+    "build": "anchor build && pnpm idl:export",
+    "test": "anchor test --skip-local-validator --provider.cluster devnet && pnpm idl:export",
+    "test:local": "anchor test && pnpm idl:export",
     "deploy": "anchor deploy --provider.cluster devnet",
     "keys:sync": "anchor keys sync",
-    "idl:export": "cp target/idl/escrow.json ../../packages/shared/src/idl.json && cp target/types/escrow.ts ../../packages/shared/src/idl-types.ts"
+    "idl:export": "cp target/idl/escrow.json ../../packages/shared/src/idl.json && cp target/types/escrow.ts ../../packages/shared/src/idl-types.ts",
+    "idl:check-sync": "tsx scripts/check-idl-sync.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.31.1",
