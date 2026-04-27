@@ -97,7 +97,26 @@ const schema = z.object({
     .transform((v) => parseInt(v, 10)),
 });
 
-export const env = schema.parse(process.env);
+// Friendly env validation: zod's default .parse() throws a noisy stack
+// trace that hides which env vars are actually broken. Wrap so the bot
+// fails with a clean list of "missing X / X is too short" lines, then
+// exit non-zero. The boot summary in index.ts prints AFTER this, so a
+// successful parse is the gate to seeing the summary at all.
+const parsed = schema.safeParse(process.env);
+if (!parsed.success) {
+  console.error(
+    "❌ env validation failed — fix the following before starting the bot:",
+  );
+  for (const issue of parsed.error.issues) {
+    const path = issue.path.join(".") || "(root)";
+    console.error(`   - ${path}: ${issue.message}`);
+  }
+  console.error(
+    "\n   Most vars are listed in .env.example. Copy it to .env and fill in the secrets.",
+  );
+  process.exit(1);
+}
+export const env = parsed.data;
 
 export function allowedGuilds(): Set<string> | null {
   if (!env.DISCORD_GUILD_ALLOWLIST) return null;
