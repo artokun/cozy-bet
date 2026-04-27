@@ -110,21 +110,30 @@ solana program show <PROGRAM_ID> --url https://api.mainnet-beta.solana.com
 
 ### Rotate admin to Squads vault
 
-Run from a key that currently holds the program authority:
+Run from a key that currently holds the program authority. Defaults
+to dry-run; pass `--confirm` to actually send the tx.
 
 ```sh
-pnpm tsx scripts/rotate-admin.ts \
+# Inspect first:
+pnpm ops:rotate-admin -- \
   --chain solana \
   --new-admin <SQUADS_VAULT_PUBKEY> \
   --cluster mainnet-beta
+
+# Then rotate for real:
+pnpm ops:rotate-admin -- \
+  --chain solana \
+  --new-admin <SQUADS_VAULT_PUBKEY> \
+  --cluster mainnet-beta \
+  --confirm
 ```
 
-Status:
-- The script is TBD (tracked alongside cozy-bet-aom).
-- The on-chain instruction it calls (`update_authority`) is also
-  TBD — `cozy-bet-aom` adds it.
-- Once both land, this single command rotates the authority. Until
-  then, do not run Phase 1 on mainnet.
+The script reads RESOLVER_KEYPAIR_PATH (default
+`./keys/bot-resolver.json`) and refuses to send unless the keypair
+is actually the current authority on-chain. After rotation, the
+old key cannot call any admin instruction — verify by re-running
+the dry-run and confirming `current authority` shows the Squads
+vault.
 
 ### Change fee defaults via Squads
 
@@ -151,9 +160,4 @@ real money so we don't have to do an emergency rotation later.
 
 ## Open follow-ups
 
-- `cozy-bet-aom` — add `update_authority` to the Solana program.
-  This is **load-bearing** for Phase 1. Until it lands, admin
-  rotation on Solana is impossible without a program upgrade /
-  redeploy.
-- `scripts/rotate-admin.ts` shared between both chains (TBD).
 - Base side documented separately in `docs/safe-multisig.md`.

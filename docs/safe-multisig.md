@@ -102,20 +102,47 @@ cast call <ESCROW_ADDR> 'hasRole(bytes32,address)(bool)' \
 
 ### Rotate admin to Safe
 
-From the current admin wallet (resolver during Phase 0, Safe in
-Phase 1+):
+From the current admin wallet. Defaults to dry-run; pass `--confirm`
+to actually send the txs (two of them: grant new + renounce old).
 
 ```sh
-# Grant first, then renounce — never renounce-before-grant or
-# you'll brick admin.
+# Inspect first:
+pnpm ops:rotate-admin -- \
+  --chain base \
+  --new-admin <SAFE_ADDR> \
+  --network base
+
+# Then rotate for real:
+pnpm ops:rotate-admin -- \
+  --chain base \
+  --new-admin <SAFE_ADDR> \
+  --network base \
+  --confirm
+```
+
+The script reads `RESOLVER_PRIVATE_KEY` + `EVM_ESCROW_ADDRESS` from
+env, verifies the current key actually holds DEFAULT_ADMIN_ROLE,
+grants the role to the Safe (skipped if already granted), then has
+the resolver renounce its own copy of the role — never the other
+way around (renounce-before-grant would brick admin).
+
+Equivalent raw cast commands if you'd rather sign manually:
+
+```sh
 cast send <ESCROW_ADDR> 'grantRole(bytes32,address)' \
-  $(cast keccak "DEFAULT_ADMIN_ROLE") <SAFE_ADDR> \
+  0x0000000000000000000000000000000000000000000000000000000000000000 \
+  <SAFE_ADDR> \
   --private-key $RESOLVER_PRIVATE_KEY --rpc-url https://mainnet.base.org
 
 cast send <ESCROW_ADDR> 'renounceRole(bytes32,address)' \
-  $(cast keccak "DEFAULT_ADMIN_ROLE") <RESOLVER_ADDR> \
+  0x0000000000000000000000000000000000000000000000000000000000000000 \
+  <RESOLVER_ADDR> \
   --private-key $RESOLVER_PRIVATE_KEY --rpc-url https://mainnet.base.org
 ```
+
+(`DEFAULT_ADMIN_ROLE` in OpenZeppelin AccessControl is the literal
+zero-bytes32, not `keccak256("DEFAULT_ADMIN_ROLE")` — the older
+`AccessControlEnumerable` examples occasionally get this wrong.)
 
 ### Change fee defaults via Safe
 
@@ -175,8 +202,6 @@ primitives).
 
 ## Open follow-ups
 
-- `cozy-bet-aom` — add `update_authority` to the Solana program
-  before mainnet.
-- A `scripts/rotate-admin.ts` helper that takes `--chain base|solana`
-  + `--new-admin <addr>` and runs the right sequence on either
-  chain (cast/foundry on Base, Anchor `update_*` on Solana).
+(none currently — admin rotation script + on-chain instructions
+are now in place on both chains. Phase 1+ ops are unblocked
+pending an actual mainnet deployment.)
