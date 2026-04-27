@@ -21,6 +21,7 @@ import {
   handleMyBets,
   handlePreviewTerms,
   handleReconcile,
+  handleRequestArbiter,
   handleResolve,
   handleSaybet,
   handleStatus,
@@ -56,6 +57,8 @@ export async function routeSlash(i: ChatInputCommandInteraction) {
       return handleReconcile(i);
     case "preview-terms":
       return handlePreviewTerms(i);
+    case "requestarbiter":
+      return handleRequestArbiter(i);
   }
 }
 

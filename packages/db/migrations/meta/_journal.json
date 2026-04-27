@@ -71,6 +71,13 @@
       "when": 1777242487921,
       "tag": "0009_wonderful_invaders",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1777245484583,
+      "tag": "0010_red_lionheart",
+      "breakpoints": true
     }
   ]
 }

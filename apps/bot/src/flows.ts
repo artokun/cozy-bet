@@ -977,6 +977,45 @@ export async function agreeCancel(betId: bigint, agreerId: string) {
   return { sig };
 }
 
+/** Either participant requests an arbiter on a Funded or Disputed bet.
+ *  Sets the bet to Disputed if it was Funded, marks arbiter_requested_*
+ *  so the watchdog + admin DMs know to escalate. Idempotent: if already
+ *  requested, returns the existing request without erroring. */
+export async function requestArbiter(betId: bigint, requesterId: string) {
+  const d = db();
+  const bet = await getBet(betId);
+  if (!bet) throw new Error("bet not found");
+  if (requesterId !== bet.challengerId && requesterId !== bet.accepterId) {
+    throw new Error("not a participant");
+  }
+  if (
+    bet.status !== BetStatus.Funded &&
+    bet.status !== BetStatus.Disputed
+  ) {
+    throw new Error(
+      `bet is ${bet.status} — arbiter only available on Funded or Disputed bets`,
+    );
+  }
+  if (bet.arbiterRequestedAt) {
+    return { alreadyRequested: true as const, bet };
+  }
+  await d
+    .update(bets)
+    .set({
+      status: BetStatus.Disputed,
+      arbiterRequestedAt: new Date(),
+      arbiterRequestedBy: requesterId,
+    })
+    .where(eq(bets.id, betId));
+  await d.insert(betEvents).values({
+    betId,
+    actorDiscordId: requesterId,
+    eventType: "arbiter_requested",
+  });
+  const refreshed = await getBet(betId);
+  return { alreadyRequested: false as const, bet: refreshed! };
+}
+
 /** Counterparty rejects the cancel request → clear markers, no refund. */
 export async function denyCancel(betId: bigint, denierId: string) {
   const bet = await getBet(betId);

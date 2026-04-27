@@ -90,3 +90,10 @@ export function isAdmin(discordId: string): boolean {
     .map((s) => s.trim())
     .includes(discordId);
 }
+
+export function adminDiscordIds(): string[] {
+  if (!env.ADMIN_DISCORD_IDS) return [];
+  return env.ADMIN_DISCORD_IDS.split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}

@@ -82,6 +82,12 @@ export const bets = pgTable(
      *  fires. On Deny, the request is cleared. */
     cancelRequestedAt: timestamp("cancel_requested_at", { withTimezone: true }),
     cancelRequestedBy: text("cancel_requested_by"),
+    /** Arbiter request. Set when either side runs /requestarbiter on a Funded
+     *  or Disputed bet. arbiter_discord_id is filled in once an admin claims
+     *  the case via /adminresolve (or the dedicated arbiter resolve flow). */
+    arbiterRequestedAt: timestamp("arbiter_requested_at", { withTimezone: true }),
+    arbiterRequestedBy: text("arbiter_requested_by"),
+    arbiterDiscordId: text("arbiter_discord_id"),
     /** Single-round counter-proposal. Either party can /counter while the bet
      *  is still in 'proposed' state. Other party gets Agree/Deny buttons.
      *  On Agree → update amount/description, clear counter_*, bet stays

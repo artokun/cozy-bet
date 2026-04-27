@@ -33,10 +33,11 @@ import {
   proposeCounter,
   reconcileBet,
   reliabilityLabel,
+  requestArbiter,
   requestCancel,
   setAnnounceMessageId,
 } from "../flows.js";
-import { isAdmin } from "../env.js";
+import { adminDiscordIds, isAdmin } from "../env.js";
 import { connection, mockUsdcMint } from "../solana.js";
 import * as evm from "../evm.js";
 import { safeChannelSend, updateAnnouncement } from "./announce.js";
@@ -156,6 +157,18 @@ export const adminresolve = new SlashCommandBuilder()
     o.setName("winner").setDescription("winning user").setRequired(true),
   );
 
+export const requestArbiterCmd = new SlashCommandBuilder()
+  .setName("requestarbiter")
+  .setDescription(
+    "Escalate a Funded or Disputed bet to an admin arbiter (max($100, 1% pot) fee from pot)",
+  )
+  .addStringOption((o) =>
+    o
+      .setName("bet_id")
+      .setDescription("bet id or shortcode")
+      .setRequired(true),
+  );
+
 export const reconcile = new SlashCommandBuilder()
   .setName("reconcile")
   .setDescription("(admin) Re-sync a bet's DB state from on-chain truth")
@@ -220,6 +233,7 @@ export const commandDefinitions: RESTPostAPIApplicationCommandsJSONBody[] = [
   adminresolve.toJSON(),
   reconcile.toJSON(),
   previewTermsCmd.toJSON(),
+  requestArbiterCmd.toJSON(),
 ];
 
 export async function handleSaybet(i: ChatInputCommandInteraction) {
@@ -644,6 +658,83 @@ export async function handleAdminResolve(i: ChatInputCommandInteraction) {
   }
 }
 
+export async function handleRequestArbiter(i: ChatInputCommandInteraction) {
+  const betIdStr = i.options.getString("bet_id", true);
+  await i.deferReply();
+  const betId = await resolveBetIdFromInput(i, betIdStr);
+  if (betId === null) return;
+  try {
+    const result = await requestArbiter(betId, i.user.id);
+    const bet = result.bet;
+    const otherSideId =
+      i.user.id === bet.challengerId ? bet.accepterId : bet.challengerId;
+    if (result.alreadyRequested) {
+      await i.editReply(
+        `Arbiter was already requested for bet \`${bet.shortcode}\` on <t:${Math.floor(
+          new Date(bet.arbiterRequestedAt!).getTime() / 1000,
+        )}:R>. An admin will pick this up.`,
+      );
+    } else {
+      await i.editReply(
+        `🛎️ Arbiter requested for bet \`${bet.shortcode}\`. An admin will review the case. The arbiter fee is **max($100, 1% of pot)** taken from the pot before payout.`,
+      );
+
+      // Channel notice so the counterparty + bystanders see the escalation.
+      try {
+        await safeChannelSend(i.client, {
+          channelId: bet.channelId,
+          payload: {
+            content: [
+              `⚠️ <@${i.user.id}> has requested an arbiter on bet \`${bet.shortcode}\`.`,
+              otherSideId ? `<@${otherSideId}> — heads up.` : null,
+              `An admin will review the dispute. Arbiter fee: max($100, 1% pot) from the pot.`,
+            ]
+              .filter(Boolean)
+              .join("\n"),
+          },
+          fallbackRecipients: [bet.challengerId, otherSideId].filter(
+            Boolean,
+          ) as string[],
+          betId: bet.id,
+        });
+      } catch {}
+
+      // DM every admin so the case lands in their inbox immediately.
+      const admins = adminDiscordIds();
+      const txLink = bet.resolutionTxSig
+        ? chainExplorerTxUrl(bet.chain as Chain, bet.resolutionTxSig)
+        : null;
+      const dmBody = [
+        `🛎️ **Arbiter requested** on bet \`${bet.shortcode}\``,
+        `Chain: ${bet.chain === "solana" ? "Solana" : "Base"}`,
+        `Stake: ${formatAmount(BigInt(bet.amount))} USDC each`,
+        `Challenger: <@${bet.challengerId}>${bet.challengerClaimsWinner ? ` (claims winner: <@${bet.challengerClaimsWinner}>)` : ""}`,
+        `Accepter: <@${bet.accepterId ?? "?"}>${bet.accepterClaimsWinner ? ` (claims winner: <@${bet.accepterClaimsWinner}>)` : ""}`,
+        ``,
+        `Terms:`,
+        `> ${bet.description}`,
+        bet.termsCanonical && bet.termsCanonical !== bet.description
+          ? `Canonical: ${bet.termsCanonical}`
+          : null,
+        ``,
+        `To resolve: \`/adminresolve bet_id:${bet.shortcode} winner:@user\``,
+        txLink ? `Tx: ${txLink}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n");
+      for (const adminId of admins) {
+        try {
+          const u = await i.client.users.fetch(adminId);
+          await u.send(dmBody);
+        } catch {}
+      }
+    }
+    await updateAnnouncement(i.client, betId);
+  } catch (e: any) {
+    await i.editReply(`Error: ${e?.message ?? String(e)}`);
+  }
+}
+
 export async function handleReconcile(i: ChatInputCommandInteraction) {
   if (!isAdmin(i.user.id)) {
     await i.reply({ content: "Admin only.", ephemeral: true });
@@ -840,7 +931,7 @@ export async function handleHelp(i: ChatInputCommandInteraction) {
       "• ✅ Agree / ❌ Deny — for /counter and /cancel proposals",
       "",
       "**Disputes**",
-      "• Different winner claims → bet freezes (Disputed). Either side can request an arbiter (admin) — costs max($100, 1% of pot) from the pot to settle.",
+      "• Different winner claims → bet freezes (Disputed). Either side can `/requestarbiter <bet_id>` to escalate to an admin — costs max($100, 1% of pot) from the pot to settle.",
       "• Admins use `/adminresolve <bet_id> @winner` to break ties.",
       "",
       "**Note on bet IDs:** every bet has a 6-char shortcode like `K7M2RX` shown in the embed. Use that anywhere a `<bet_id>` is asked for.",
