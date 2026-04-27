@@ -38,7 +38,23 @@ function envEvmAddress(envName: string, value: string | undefined): Address | nu
   return value as Address;
 }
 
-const RESOLVER_PRIVATE_KEY = env.RESOLVER_PRIVATE_KEY;
+/** Reject malformed RESOLVER_PRIVATE_KEY at module load. viem's
+ *  privateKeyToAccount throws "Invalid private key" with no var name
+ *  attached; surface a clearer message before that point. */
+function envEvmPrivateKey(envName: string, value: string | undefined): Hex | null {
+  if (!value) return null;
+  if (!/^0x[0-9a-f]{64}$/i.test(value)) {
+    const msg = `❌ env.${envName} is not a valid 0x-prefixed 64-hex private key`;
+    console.error(msg);
+    console.error(
+      `   Expected /^0x[0-9a-f]{64}$/i (32 bytes hex with 0x prefix). Got ${value.length} chars.`,
+    );
+    throw new Error(msg);
+  }
+  return value as Hex;
+}
+
+const RESOLVER_PRIVATE_KEY = envEvmPrivateKey("RESOLVER_PRIVATE_KEY", env.RESOLVER_PRIVATE_KEY);
 const ESCROW_ADDRESS = envEvmAddress("EVM_ESCROW_ADDRESS", env.EVM_ESCROW_ADDRESS);
 const USDC_ADDRESS = envEvmAddress("EVM_USDC_ADDRESS", env.EVM_USDC_ADDRESS);
 const TREASURY_OWNERS: (Address | null)[] = [
@@ -77,13 +93,13 @@ function publicClient() {
 function walletClient() {
   if (_wallet) return _wallet;
   assertConfigured();
-  const account = privateKeyToAccount(RESOLVER_PRIVATE_KEY as Hex);
+  const account = privateKeyToAccount(RESOLVER_PRIVATE_KEY!);
   _wallet = createWalletClient({ account, chain: CHAIN, transport: http() } as never);
   return _wallet;
 }
 
 export const resolverAddress: Address | null = RESOLVER_PRIVATE_KEY
-  ? privateKeyToAccount(RESOLVER_PRIVATE_KEY as Hex).address
+  ? privateKeyToAccount(RESOLVER_PRIVATE_KEY!).address
   : null;
 
 // ABIs live in ./evm-abi.ts so they can be imported by the
