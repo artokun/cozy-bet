@@ -17,15 +17,41 @@ import path from "node:path";
 import { env } from "./env.js";
 import { isEvmAddress } from "./env-shape.js";
 
-function loadKeypair(p: string): Keypair {
+function loadKeypair(envName: string, p: string): Keypair {
   const full = path.isAbsolute(p) ? p : path.resolve(process.cwd(), p);
-  const raw = JSON.parse(fs.readFileSync(full, "utf8"));
-  return Keypair.fromSecretKey(Uint8Array.from(raw));
+  let raw: unknown;
+  try {
+    raw = JSON.parse(fs.readFileSync(full, "utf8"));
+  } catch (e: unknown) {
+    const code = (e as NodeJS.ErrnoException)?.code;
+    if (code === "ENOENT") {
+      console.error(
+        `❌ env.${envName} points at ${p} (resolved: ${full}) but no file exists there.`,
+      );
+      console.error(
+        "   Generate keypairs with `solana-keygen new -o keys/bot-resolver.json` (or pnpm tsx scripts/generate-keys.ts) then retry.",
+      );
+    } else {
+      console.error(
+        `❌ env.${envName} (${full}) could not be read: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+    throw e instanceof Error ? e : new Error(String(e));
+  }
+  if (!Array.isArray(raw)) {
+    const msg = `❌ env.${envName} (${full}) is not a Solana keypair JSON file (expected an array of bytes).`;
+    console.error(msg);
+    throw new Error(msg);
+  }
+  return Keypair.fromSecretKey(Uint8Array.from(raw as number[]));
 }
 
-export const resolver = loadKeypair(env.RESOLVER_KEYPAIR_PATH);
+export const resolver = loadKeypair(
+  "RESOLVER_KEYPAIR_PATH",
+  env.RESOLVER_KEYPAIR_PATH,
+);
 export const arbiter = env.ARBITER_KEYPAIR_PATH
-  ? loadKeypair(env.ARBITER_KEYPAIR_PATH)
+  ? loadKeypair("ARBITER_KEYPAIR_PATH", env.ARBITER_KEYPAIR_PATH)
   : resolver;
 export const connection = new Connection(env.SOLANA_RPC_URL, "confirmed");
 
