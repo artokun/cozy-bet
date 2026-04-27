@@ -332,6 +332,114 @@ export function startApi(client: Client) {
     res.json({ cases: out });
   });
 
+  /**
+   * GET /api/users/:discordId/profile
+   *
+   * Returns a user's full profile: linked wallets, X handle, active bets,
+   * recent history, share-verified count. The web /me page proxies through
+   * its own session-gated route (it knows which discordId the session
+   * attests). Auth = ADMIN_API_TOKEN bearer; the web server is the only
+   * trusted caller. Browsers never hit this directly.
+   *
+   * Excludes USDC balances — those are chain RPC reads that the page can
+   * do client-side via wagmi/wallet-adapter once the user reconnects.
+   */
+  app.get("/api/users/:discordId/profile", async (req, res) => {
+    if (!env.ADMIN_API_TOKEN) {
+      return res
+        .status(503)
+        .json({ error: "user api disabled (set ADMIN_API_TOKEN to enable)" });
+    }
+    const auth = req.header("authorization") ?? "";
+    if (auth !== `Bearer ${env.ADMIN_API_TOKEN}`) {
+      return res.status(401).json({ error: "unauthorized" });
+    }
+    const discordId = req.params.discordId;
+    if (!/^\d{6,30}$/.test(discordId)) {
+      return res.status(400).json({ error: "bad discord id" });
+    }
+    const d = getDb(env.DATABASE_URL);
+    const userRows = await d
+      .select()
+      .from(users)
+      .where(eq(users.discordId, discordId));
+    const user = userRows[0];
+    if (!user) {
+      return res.status(404).json({ error: "user not found" });
+    }
+    // All bets the user is on either side of, ordered newest first.
+    const userBets = await d
+      .select()
+      .from(bets)
+      .where(
+        sql`${bets.challengerId} = ${discordId} OR ${bets.accepterId} = ${discordId}`,
+      )
+      .orderBy(sql`${bets.createdAt} DESC`)
+      .limit(100);
+    const ACTIVE = new Set([
+      "proposed",
+      "accepted",
+      "pending",
+      "funded",
+      "disputed",
+    ]);
+    const projectBet = (b: typeof bets.$inferSelect) => {
+      const isChallenger = b.challengerId === discordId;
+      const myShareUrl = isChallenger
+        ? b.challengerShareUrl
+        : b.accepterShareUrl;
+      return {
+        id: b.id.toString(),
+        chain: b.chain,
+        shortcode: b.shortcode,
+        status: b.status,
+        amount: b.amount.toString(),
+        description: b.description,
+        opponent: isChallenger ? b.accepterId : b.challengerId,
+        side: isChallenger ? ("challenger" as const) : ("accepter" as const),
+        winnerId: b.winnerId,
+        myShareDiscount: !!myShareUrl,
+        createdAt: b.createdAt.toISOString(),
+        resolvedAt: b.resolvedAt?.toISOString() ?? null,
+        guildId: b.guildId,
+        channelId: b.channelId,
+        announceMessageId: b.announceMessageId,
+      };
+    };
+    const active: ReturnType<typeof projectBet>[] = [];
+    const history: ReturnType<typeof projectBet>[] = [];
+    let sharesVerified = 0;
+    let won = 0;
+    let drew = 0;
+    for (const b of userBets) {
+      const proj = projectBet(b);
+      if (proj.myShareDiscount) sharesVerified++;
+      if (b.status === "resolved" && b.winnerId === discordId) won++;
+      if (b.status === "drawn") drew++;
+      if (ACTIVE.has(b.status)) active.push(proj);
+      else history.push(proj);
+    }
+    res.json({
+      profile: {
+        discordId: user.discordId,
+        xHandle: user.xHandle,
+        walletPubkey: user.walletPubkey,
+        evmAddress: user.evmAddress,
+        preferredChain: user.preferredChain,
+        linkedAt: user.linkedAt?.toISOString() ?? null,
+        resolveEvents: user.resolveEvents,
+        resolveScoreGood: user.resolveScoreGood,
+        sharesVerified,
+        won,
+        drew,
+        activeCount: active.length,
+        historyCount: history.length,
+      },
+      active,
+      history: history.slice(0, 25),
+    });
+  });
+
   return app.listen(env.BOT_API_PORT, () => {
     console.log(`[api] listening on :${env.BOT_API_PORT}`);
   });
