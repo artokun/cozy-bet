@@ -5,6 +5,8 @@
  * Server-rendered: hits the bot API at BOT_API_URL on each request.
  * Read-only — no auth, no wallet connection.
  */
+import { formatUsdcAtoms as fmtUSDC } from "../../lib/format";
+
 const BOT_API_URL = process.env.BOT_API_URL ?? "http://localhost:3001";
 const SOLANA_CLUSTER = process.env.NEXT_PUBLIC_SOLANA_CLUSTER ?? "devnet";
 
@@ -49,10 +51,6 @@ async function fetchRecent(): Promise<RecentBet[]> {
   });
   if (!r.ok) return [];
   return r.json();
-}
-
-function fmtUSDC(atoms: string): string {
-  return (Number(BigInt(atoms)) / 1e6).toFixed(2);
 }
 
 function fmtTime(iso: string): string {

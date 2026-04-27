@@ -7,6 +7,7 @@
  * web server with the server-only ADMIN_API_TOKEN.
  */
 import { useCallback, useEffect, useState } from "react";
+import { formatUsdcAtoms } from "../../lib/format";
 
 type ProfileBet = {
   id: string;
@@ -222,7 +223,7 @@ function BetList({ bets }: { bets: ProfileBet[] }) {
 }
 
 function BetRow({ b }: { b: ProfileBet }) {
-  const stake = (Number(BigInt(b.amount)) / 1e6).toFixed(2);
+  const stake = formatUsdcAtoms(b.amount);
   const chainLabel = b.chain === "solana" ? "Solana" : "Base";
   const link = b.announceMessageId
     ? `https://discord.com/channels/${b.guildId}/${b.channelId}/${b.announceMessageId}`

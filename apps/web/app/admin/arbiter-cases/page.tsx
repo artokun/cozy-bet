@@ -12,6 +12,7 @@
  * Decide actions still happen in Discord (/arbiter-claim, /arbiter-decide).
  */
 import { useCallback, useEffect, useState } from "react";
+import { formatUsdcAtoms } from "../../../lib/format";
 
 type Evidence = {
   actorDiscordId: string;
@@ -211,7 +212,7 @@ export default function ArbiterCasesPage() {
 }
 
 function CaseCard({ c }: { c: ArbiterCase }) {
-  const stake = (Number(BigInt(c.amount)) / 1e6).toFixed(2);
+  const stake = formatUsdcAtoms(c.amount);
   const chainLabel = c.chain === "solana" ? "Solana" : "Base";
   const announceLink = c.announceMessageId
     ? `https://discord.com/channels/${c.guildId}/${c.channelId}/${c.announceMessageId}`

@@ -29,6 +29,7 @@ import {
   erc20Abi,
   escrowAbi,
 } from "../../../lib/baseConfig";
+import { formatUsdcAtoms } from "../../../lib/format";
 
 function useBet(id: string) {
   const [bet, setBet] = useState<BetDetail | null>(null);
@@ -75,7 +76,7 @@ export default function FundPage({
 }
 
 function BetHeader({ bet }: { bet: BetDetail }) {
-  const tokenAmount = (Number(BigInt(bet.amount)) / 1e6).toFixed(2);
+  const tokenAmount = formatUsdcAtoms(bet.amount);
   const fmt = (w?: string | null) =>
     w ? `${w.slice(0, 6)}…${w.slice(-4)}` : "(unlinked)";
   const chainLabel = bet.chain === "solana" ? "Solana" : "Base";
@@ -123,7 +124,7 @@ function SolanaFund({ bet }: { bet: BetDetail }) {
   const wallet = useAnchorWallet();
   const { connected, publicKey } = useWallet();
   const [status, setStatus] = useState<Status>({ kind: "idle" });
-  const tokenAmount = (Number(BigInt(bet.amount)) / 1e6).toFixed(2);
+  const tokenAmount = formatUsdcAtoms(bet.amount);
 
   const myRole = useMemo(() => {
     if (!publicKey) return null;
@@ -236,7 +237,7 @@ function BaseFund({ bet }: { bet: BetDetail }) {
   useWaitForTransactionReceipt({ hash: pendingTx });
 
   const stake = BigInt(bet.amount);
-  const tokenAmount = (Number(stake) / 1e6).toFixed(2);
+  const tokenAmount = formatUsdcAtoms(stake);
 
   const myRole = useMemo(() => {
     if (!address) return null;

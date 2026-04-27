@@ -1,4 +1,5 @@
 import { fetchBet } from "../../../lib/botApi";
+import { formatUsdcAtoms } from "../../../lib/format";
 
 export default async function BetStatusPage({
   params,
@@ -21,7 +22,7 @@ export default async function BetStatusPage({
       </main>
     );
   }
-  const tokenAmount = (Number(BigInt(bet.amount)) / 1e6).toFixed(2);
+  const tokenAmount = formatUsdcAtoms(bet.amount);
   return (
     <main className="container">
       <div className="card">
