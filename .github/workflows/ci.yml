@@ -1,0 +1,62 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Typecheck (bot)
+        run: pnpm --filter @cozy-bet/bot exec tsc --noEmit
+
+      - name: Typecheck (web)
+        run: pnpm --filter @cozy-bet/web exec tsc --noEmit
+
+      - name: Unit tests
+        # Runs the node:test suites across @cozy-bet/shared, @cozy-bet/bot,
+        # and @cozy-bet/web. No DB / Discord / on-chain mocks needed —
+        # these only cover pure functions.
+        run: pnpm test
+
+      - name: Web build
+        # Catches Next.js compile / route-handler errors that pure typecheck
+        # misses (e.g. wagmi / accounts module-not-found we hit earlier).
+        run: pnpm --filter @cozy-bet/web build
+
+  solidity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Build + test escrow contract
+        working-directory: apps/contracts
+        run: |
+          forge build
+          forge test
