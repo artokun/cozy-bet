@@ -27,13 +27,33 @@ export const arbiter = env.ARBITER_KEYPAIR_PATH
   ? loadKeypair(env.ARBITER_KEYPAIR_PATH)
   : resolver;
 export const connection = new Connection(env.SOLANA_RPC_URL, "confirmed");
-export const programId = new PublicKey(env.PROGRAM_ID);
-export const mockUsdcMint = new PublicKey(env.MOCK_USDC_MINT);
+
+/** Wrap `new PublicKey(...)` so an env mistake (most commonly an EVM
+ *  0x... address pasted into a Solana slot) prints a labeled error
+ *  with the env-var name + the offending value instead of solana-web3.js's
+ *  cryptic "Non-base58 character" or "Invalid public key input". */
+function envPubkey(envName: string, value: string): PublicKey {
+  try {
+    return new PublicKey(value);
+  } catch (e: unknown) {
+    console.error(
+      `❌ env.${envName} is not a valid Solana base58 pubkey: ${value}`,
+    );
+    if (/^0x[0-9a-f]{40}$/i.test(value)) {
+      console.error(
+        `   That looks like an EVM address. The Solana env vars (PROGRAM_ID, MOCK_USDC_MINT, TREASURY_OWNER_*, ARBITER_PUBKEY) want base58 — see .env.example for examples.`,
+      );
+    }
+    throw e instanceof Error ? e : new Error(String(e));
+  }
+}
+export const programId = envPubkey("PROGRAM_ID", env.PROGRAM_ID);
+export const mockUsdcMint = envPubkey("MOCK_USDC_MINT", env.MOCK_USDC_MINT);
 export const treasuryOwners: [PublicKey, PublicKey, PublicKey, PublicKey] = [
-  new PublicKey(env.TREASURY_OWNER_1),
-  new PublicKey(env.TREASURY_OWNER_2),
-  new PublicKey(env.TREASURY_OWNER_3),
-  new PublicKey(env.TREASURY_OWNER_4),
+  envPubkey("TREASURY_OWNER_1", env.TREASURY_OWNER_1),
+  envPubkey("TREASURY_OWNER_2", env.TREASURY_OWNER_2),
+  envPubkey("TREASURY_OWNER_3", env.TREASURY_OWNER_3),
+  envPubkey("TREASURY_OWNER_4", env.TREASURY_OWNER_4),
 ];
 
 const provider = new AnchorProvider(connection, new Wallet(resolver), {
