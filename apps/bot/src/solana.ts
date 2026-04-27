@@ -15,6 +15,7 @@ import {
 import fs from "node:fs";
 import path from "node:path";
 import { env } from "./env.js";
+import { isEvmAddress } from "./env-shape.js";
 
 function loadKeypair(p: string): Keypair {
   const full = path.isAbsolute(p) ? p : path.resolve(process.cwd(), p);
@@ -39,7 +40,7 @@ function envPubkey(envName: string, value: string): PublicKey {
     console.error(
       `❌ env.${envName} is not a valid Solana base58 pubkey: ${value}`,
     );
-    if (/^0x[0-9a-f]{40}$/i.test(value)) {
+    if (isEvmAddress(value)) {
       console.error(
         `   That looks like an EVM address. The Solana env vars (PROGRAM_ID, MOCK_USDC_MINT, TREASURY_OWNER_*, ARBITER_PUBKEY) want base58 — see .env.example for examples.`,
       );

@@ -19,6 +19,10 @@ import { createPublicClient, http, type Address } from "viem";
 import { baseSepolia } from "viem/chains";
 import idl from "../packages/shared/src/idl.json" with { type: "json" };
 import type { Escrow } from "../packages/shared/src/idl-types.js";
+import {
+  isEvmAddress,
+  looksLikeSolanaBase58,
+} from "../apps/bot/src/env-shape.js";
 
 // Expected config (locked in at deploy time)
 const SOLANA_PROGRAM_ID = "nqQkfoyxtzxDBHmyxnJs3KwQVvz5CoFffH8vcQzS6yt";
@@ -231,9 +235,10 @@ async function smokeBase() {
  */
 function smokeEnvConsistency() {
   console.log("\n== .env vs expected ==");
-  const looksLikeEvm = (s: string) => /^0x[0-9a-f]{40}$/i.test(s);
-  const looksLikeSolana = (s: string) =>
-    /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(s) && !looksLikeEvm(s);
+  // Use the bot's shared predicates so smoke + runtime stay in sync.
+  // Statically imported below since the bot package is a workspace dep.
+  const looksLikeEvm = isEvmAddress;
+  const looksLikeSolana = looksLikeSolanaBase58;
   const checkEnv = (
     name: string,
     expected: string,

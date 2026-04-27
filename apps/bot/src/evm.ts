@@ -15,6 +15,11 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia, base as baseMainnet } from "viem/chains";
 import { env } from "./env.js";
+import {
+  isEvmAddress,
+  isEvmPrivateKey,
+  looksLikeSolanaBase58,
+} from "./env-shape.js";
 
 // Addresses configured at module load. Throwing here would crash at import,
 // so we lazy-error in `assertConfigured()` when an EVM bet is actually used.
@@ -25,10 +30,10 @@ import { env } from "./env.js";
  *  unset (the lazy isConfigured gate covers the unset case). */
 function envEvmAddress(envName: string, value: string | undefined): Address | null {
   if (!value) return null;
-  if (!/^0x[0-9a-f]{40}$/i.test(value)) {
+  if (!isEvmAddress(value)) {
     const msg = `❌ env.${envName} is not a valid 0x EVM address: ${value}`;
     console.error(msg);
-    if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value)) {
+    if (looksLikeSolanaBase58(value)) {
       console.error(
         `   That looks like a Solana base58 pubkey. EVM env vars (EVM_ESCROW_ADDRESS, EVM_USDC_ADDRESS, EVM_TREASURY_OWNER_*) want 0x... — see .env.example.`,
       );
@@ -43,7 +48,7 @@ function envEvmAddress(envName: string, value: string | undefined): Address | nu
  *  attached; surface a clearer message before that point. */
 function envEvmPrivateKey(envName: string, value: string | undefined): Hex | null {
   if (!value) return null;
-  if (!/^0x[0-9a-f]{64}$/i.test(value)) {
+  if (!isEvmPrivateKey(value)) {
     const msg = `❌ env.${envName} is not a valid 0x-prefixed 64-hex private key`;
     console.error(msg);
     console.error(
