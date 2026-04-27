@@ -1208,7 +1208,9 @@ export async function requestArbiter(betId: bigint, requesterId: string) {
 
 /** Admin claims an open arbiter case (sets arbiter_discord_id). Idempotent
  *  if the same admin re-claims; rejects another admin trying to take it
- *  while it's already claimed. */
+ *  while it's already claimed. Uses an atomic conditional UPDATE so two
+ *  admins racing for the same case don't both succeed (would otherwise
+ *  produce duplicate evidence-prompt DMs to participants). */
 export async function claimArbiter(betId: bigint, adminId: string) {
   const d = db();
   const bet = await getBet(betId);
@@ -1216,18 +1218,31 @@ export async function claimArbiter(betId: bigint, adminId: string) {
   if (!bet.arbiterRequestedAt) {
     throw new Error("no arbiter request open on this bet");
   }
+  if (bet.arbiterDiscordId === adminId) {
+    return { alreadyClaimed: true as const, bet };
+  }
   if (bet.arbiterDiscordId && bet.arbiterDiscordId !== adminId) {
     throw new Error(
       `arbiter already claimed by <@${bet.arbiterDiscordId}>`,
     );
   }
-  if (bet.arbiterDiscordId === adminId) {
-    return { alreadyClaimed: true as const, bet };
-  }
-  await d
+  // Atomic claim: only one admin can flip arbiterDiscordId from NULL to
+  // their own id. The other admin's UPDATE affects zero rows.
+  const claimed = await d
     .update(bets)
     .set({ arbiterDiscordId: adminId })
-    .where(eq(bets.id, betId));
+    .where(and(eq(bets.id, betId), isNull(bets.arbiterDiscordId)))
+    .returning();
+  if (claimed.length === 0) {
+    // Race lost — refetch and surface the winning admin.
+    const after = await getBet(betId);
+    if (after?.arbiterDiscordId === adminId) {
+      return { alreadyClaimed: true as const, bet: after };
+    }
+    throw new Error(
+      `arbiter just claimed by <@${after?.arbiterDiscordId ?? "?"}>`,
+    );
+  }
   await d.insert(betEvents).values({
     betId,
     actorDiscordId: adminId,
