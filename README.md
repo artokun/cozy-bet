@@ -120,6 +120,19 @@ pnpm testnet:lifecycle:solana                              # 0.05 SOL
 CI runs the smoke test on every push/PR + every 6h to catch drift; see
 `.github/workflows/testnet-smoke.yml`.
 
+## Pre-commit checks
+
+```bash
+pnpm preflight
+```
+
+Runs typecheck (bot + web), DB schema-vs-migrations consistency,
+all 53 unit tests, IDL drift (bot's idl.json vs Anchor build), and
+EVM ABI drift (bot's hand-rolled ABI vs Foundry build). The last
+two skip silently if the corresponding build artifacts are absent —
+you only need a Solana / Foundry toolchain installed if you've
+edited the program / contract.
+
 ## Prereqs
 
 - Node 20+, pnpm 9+
