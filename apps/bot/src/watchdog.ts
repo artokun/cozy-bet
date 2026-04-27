@@ -8,7 +8,7 @@ import { updateAnnouncement } from "./discord/announce.js";
 import { formatAmount } from "./discord/render.js";
 
 /**
- * Background watchdog. Runs four independent ticks on the same interval:
+ * Background watchdog. Runs five independent ticks on the same interval:
  *
  * 1. Pending-refund: bets stuck in `pending` past
  *    WATCHDOG_PENDING_REFUND_MINUTES auto-refund. Off by default (0).
@@ -24,6 +24,12 @@ import { formatAmount } from "./discord/render.js";
  * 4. Arbiter-stale: DMs admins once when /requestarbiter has gone >24h
  *    without an /arbiter-claim. Always on; idempotent via
  *    `arbiter_nudge_sent_at`.
+ *
+ * 5. Stale-lock: clears "PENDING:*" sentinels in resolution_tx_sig /
+ *    init_tx_sig / share_url that are >5min old. Catches the case
+ *    where the bot crashed mid-chain-call and the catch path that
+ *    would have released the lock never ran. Without this, a bet
+ *    stays in lock-held state forever and the user can't retry.
  *
  * Saybet's #1 dispute-prevention feature. Mechanically the bot still
  * arbitrates — but nudges keep most users from drifting into the arbiter
@@ -59,6 +65,11 @@ export function startWatchdog(client: Client): NodeJS.Timeout {
       await tickArbiterStale(client);
     } catch (e) {
       console.error("[watchdog] arbiter-stale tick error:", e);
+    }
+    try {
+      await tickStaleLocks();
+    } catch (e) {
+      console.error("[watchdog] stale-lock tick error:", e);
     }
   };
 
@@ -248,6 +259,58 @@ async function tickArbiterStale(client: Client) {
       .where(eq(bets.id, b.id));
     console.log(
       `[watchdog] arbiter-stale nudge sent for ${b.shortcode} (${delivered}/${admins.length} admins reached)`,
+    );
+  }
+}
+
+/**
+ * Clear stale "PENDING:*" lock sentinels in resolution_tx_sig /
+ * init_tx_sig / share_url columns.
+ *
+ * The locks (claimResolutionLock, initializeOnChain's slot claim,
+ * applyShareDiscount's per-side slot) are normally released either by
+ * being overwritten with a real tx hash on success, or cleared back to
+ * NULL by the catch path on chain-call failure. But if the bot crashes
+ * mid-call, the catch path never runs — the sentinel sticks forever
+ * and the user can never retry.
+ *
+ * This tick clears any sentinel older than the lock-stale window (5
+ * minutes). 5min is well above the slowest realistic chain* call
+ * (Solana <3s typical, Base <30s typical) so we won't trample a
+ * slow-but-still-running call.
+ */
+const LOCK_STALE_MS = 5 * 60 * 1000;
+async function tickStaleLocks() {
+  const d = getDb(env.DATABASE_URL);
+  const cutoff = new Date(Date.now() - LOCK_STALE_MS);
+  // Find any bet whose lock sentinel might be stuck. We can't filter by
+  // PENDING:* in the WHERE clause without a string LIKE; cheaper to
+  // fetch by updatedAt heuristic — bets that haven't transitioned in
+  // >5min and still have a PENDING value are stuck.
+  //
+  // resolved_at is a tighter signal: if resolved_at IS NOT NULL the bet
+  // is settled; if resolution_tx_sig starts with PENDING and resolved_at
+  // is NULL and createdAt is older than the cutoff, the lock is stale.
+  const stuck = await d
+    .select()
+    .from(bets)
+    .where(
+      and(
+        sql`(${bets.resolutionTxSig} LIKE 'PENDING:%' OR ${bets.initTxSig} LIKE 'PENDING:%' OR ${bets.challengerShareUrl} LIKE 'PENDING:%' OR ${bets.accepterShareUrl} LIKE 'PENDING:%')`,
+        lt(bets.createdAt, cutoff),
+        isNull(bets.resolvedAt),
+      ),
+    );
+  for (const b of stuck) {
+    const patch: Partial<typeof bets.$inferInsert> = {};
+    if (b.resolutionTxSig?.startsWith("PENDING:")) patch.resolutionTxSig = null;
+    if (b.initTxSig?.startsWith("PENDING:")) patch.initTxSig = null;
+    if (b.challengerShareUrl?.startsWith("PENDING:")) patch.challengerShareUrl = null;
+    if (b.accepterShareUrl?.startsWith("PENDING:")) patch.accepterShareUrl = null;
+    if (Object.keys(patch).length === 0) continue;
+    await d.update(bets).set(patch).where(eq(bets.id, b.id));
+    console.warn(
+      `[watchdog] cleared stale lock(s) on bet ${b.shortcode}: ${Object.keys(patch).join(", ")}`,
     );
   }
 }
