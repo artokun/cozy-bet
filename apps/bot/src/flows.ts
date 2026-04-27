@@ -120,11 +120,61 @@ export async function applyShareDiscount(args: {
       `bet is ${bet.status} — discount can only be applied before resolve`,
     );
   }
-  const sig = await chainSetFeeBpsForSide(bet.chain as Chain, {
-    betId: args.betId,
-    side: args.participantWallet,
-    newBps: args.newBps,
-  });
+  // Atomically claim the per-side share slot via a conditional UPDATE.
+  // Two concurrent /confirm-share calls (double-tap, retry) both pass the
+  // pre-check above, but only one wins this UPDATE — the other gets zero
+  // affected rows and aborts before the on-chain setFeeBpsForSide fires.
+  // Use a sentinel ("PENDING:<nonce>") rather than the final URL so we
+  // don't leak the URL until the on-chain call confirms.
+  const pendingSentinel = `PENDING:${args.tweetUrl}`;
+  const claimedRows = await d
+    .update(bets)
+    .set(
+      isChallenger
+        ? { challengerShareUrl: pendingSentinel }
+        : { accepterShareUrl: pendingSentinel },
+    )
+    .where(
+      and(
+        eq(bets.id, args.betId),
+        isNull(
+          isChallenger ? bets.challengerShareUrl : bets.accepterShareUrl,
+        ),
+      ),
+    )
+    .returning();
+  if (claimedRows.length === 0) {
+    // Race lost OR slot already redeemed — refetch and report.
+    const after = await getBet(args.betId);
+    const url = isChallenger
+      ? after?.challengerShareUrl
+      : after?.accepterShareUrl;
+    return {
+      alreadyApplied: true as const,
+      url: url ?? "(redeemed by a concurrent request)",
+    };
+  }
+  let sig: string;
+  try {
+    sig = await chainSetFeeBpsForSide(bet.chain as Chain, {
+      betId: args.betId,
+      side: args.participantWallet,
+      newBps: args.newBps,
+    });
+  } catch (e) {
+    // On-chain call failed — release the slot so the user can retry.
+    await d
+      .update(bets)
+      .set(
+        isChallenger
+          ? { challengerShareUrl: null }
+          : { accepterShareUrl: null },
+      )
+      .where(eq(bets.id, args.betId));
+    throw e;
+  }
+  // Replace the sentinel with the real URL now that the on-chain call
+  // confirmed.
   await d
     .update(bets)
     .set(
@@ -1183,22 +1233,59 @@ export async function claimArbiter(betId: bigint, adminId: string) {
 
 /** Record an evidence message from a participant (sent via DM to the bot)
  *  for a bet that has an arbiter actively assigned. */
+/** Cap on how many evidence rows a single participant can submit per
+ *  bet — prevents an adversarial party from spamming the bot's DMs and
+ *  burying the other side's evidence in /arbiter-review. */
+export const MAX_EVIDENCE_PER_USER_PER_BET = 20;
+/** Discord's own message-content cap, but the regular content is up to
+ *  4000 chars on Nitro — clamp at 2000 since that's what /arbiter-review
+ *  display assumes and prevents pathological storage. */
+export const MAX_EVIDENCE_TEXT_LEN = 2000;
+
+export async function countArbiterEvidenceForUser(
+  betId: bigint,
+  fromDiscordId: string,
+): Promise<number> {
+  const d = db();
+  const rows = await d
+    .select({ count: sql<number>`count(*)::int` })
+    .from(betEvents)
+    .where(
+      and(
+        eq(betEvents.betId, betId),
+        eq(betEvents.eventType, "arbiter_evidence"),
+        eq(betEvents.actorDiscordId, fromDiscordId),
+      ),
+    );
+  return rows[0]?.count ?? 0;
+}
+
 export async function recordArbiterEvidence(args: {
   betId: bigint;
   fromDiscordId: string;
   text: string;
   attachmentUrls?: string[];
-}) {
+}): Promise<{ ok: true } | { ok: false; reason: "rate_limit" | "empty" }> {
+  const trimmed = (args.text ?? "").slice(0, MAX_EVIDENCE_TEXT_LEN);
+  const atts = (args.attachmentUrls ?? []).slice(0, 10);
+  if (!trimmed && atts.length === 0) {
+    return { ok: false, reason: "empty" };
+  }
+  const existing = await countArbiterEvidenceForUser(
+    args.betId,
+    args.fromDiscordId,
+  );
+  if (existing >= MAX_EVIDENCE_PER_USER_PER_BET) {
+    return { ok: false, reason: "rate_limit" };
+  }
   const d = db();
   await d.insert(betEvents).values({
     betId: args.betId,
     actorDiscordId: args.fromDiscordId,
     eventType: "arbiter_evidence",
-    payload: {
-      text: args.text,
-      attachments: args.attachmentUrls ?? [],
-    },
+    payload: { text: trimmed, attachments: atts },
   });
+  return { ok: true };
 }
 
 /** Find every bet that the given user is a participant of AND that has an

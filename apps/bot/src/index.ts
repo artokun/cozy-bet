@@ -84,12 +84,24 @@ client.on(Events.MessageCreate, async (msg) => {
     })();
     const target = matchByCode ?? bets[0]!;
     const attachmentUrls = msg.attachments.map((a) => a.url);
-    await recordArbiterEvidence({
+    const result = await recordArbiterEvidence({
       betId: target.id,
       fromDiscordId: msg.author.id,
       text: msg.content,
       attachmentUrls,
     });
+    if (!result.ok) {
+      if (result.reason === "rate_limit") {
+        await msg.reply({
+          content: `⚠️ You've already submitted the maximum evidence entries for bet \`${target.shortcode}\` (cap is per-user-per-bet to keep /arbiter-review readable). Send the arbiter a follow-up only if you have something genuinely new.`,
+        });
+      } else if (result.reason === "empty") {
+        await msg.reply({
+          content: `⚠️ Empty message — include text or attachments. Bet \`${target.shortcode}\`.`,
+        });
+      }
+      return;
+    }
     await msg.reply({
       content: `✅ Recorded ${attachmentUrls.length ? `${attachmentUrls.length} attachment(s) + ` : ""}your evidence for bet \`${target.shortcode}\`. The arbiter will see it.`,
     });

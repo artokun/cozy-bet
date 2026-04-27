@@ -20,18 +20,36 @@ export function startApi(client: Client) {
   const app = express();
   app.use(express.json());
 
-  // Permissive CORS — the bot's API is small + read-mostly, and the web app
-  // (link / fund / admin pages) is the only documented browser caller. We
-  // allow any Origin and reflect it back so browsers don't block the
-  // Authorization header on /api/admin/arbiter-cases.
+  // CORS. Public read endpoints (/api/bets/*, /api/bet/:id, /api/wallet-link/*)
+  // accept any origin — they don't touch auth headers. The admin endpoint
+  // (/api/admin/*) only allows the configured WEB_PUBLIC_URL since it returns
+  // participant evidence + admin tokens shouldn't be reachable from arbitrary
+  // pages on the internet. In local dev WEB_PUBLIC_URL defaults to
+  // http://localhost:3000.
+  const adminOrigin = (() => {
+    try {
+      return new URL(env.WEB_PUBLIC_URL).origin;
+    } catch {
+      return null;
+    }
+  })();
   app.use((req, res, next) => {
-    const origin = req.headers.origin ?? "*";
-    res.setHeader("Access-Control-Allow-Origin", origin);
+    const reqOrigin = req.headers.origin;
+    const isAdminPath = req.path.startsWith("/api/admin");
+    if (isAdminPath) {
+      // Strict: only the configured web origin. Don't reflect arbitrary
+      // origins — admin data leaks would be the kind of mistake that
+      // burns trust without anyone noticing.
+      if (adminOrigin && reqOrigin === adminOrigin) {
+        res.setHeader("Access-Control-Allow-Origin", adminOrigin);
+      }
+      // No Allow-Origin header at all if origin doesn't match → browser
+      // blocks the response. Same-origin (no Origin header) still works.
+    } else {
+      res.setHeader("Access-Control-Allow-Origin", reqOrigin ?? "*");
+    }
     res.setHeader("Vary", "Origin");
-    res.setHeader(
-      "Access-Control-Allow-Methods",
-      "GET, POST, OPTIONS",
-    );
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.setHeader(
       "Access-Control-Allow-Headers",
       "Content-Type, Authorization",

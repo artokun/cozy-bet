@@ -993,6 +993,12 @@ export async function handleArbiterDecide(i: ChatInputCommandInteraction) {
     await i.editReply(
       `⚖️ Arbiter decided. Winner: ${winner}. Tx: ${url}`,
     );
+    // Send the same outcome DMs the non-arbiter resolve path does
+    // (winner gets dunk picker, loser gets DoN button) — without this,
+    // participants only see resolution if they happen to refresh the
+    // channel announcement, which is a trust-breaking gap on the
+    // dispute path specifically.
+    await sendResolutionDms(i, betId);
     await updateAnnouncement(i.client, betId);
   } catch (e: any) {
     await i.editReply(`Error: ${e?.message ?? String(e)}`);
