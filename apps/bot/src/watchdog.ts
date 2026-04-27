@@ -2,22 +2,28 @@ import { and, eq, gt, gte, isNull, lt, or, sql } from "drizzle-orm";
 import type { Client } from "discord.js";
 import { getDb, bets } from "@cozy-bet/db";
 import { BetStatus } from "@cozy-bet/shared";
-import { env } from "./env.js";
+import { adminDiscordIds, env } from "./env.js";
 import { refundBet } from "./flows.js";
 import { updateAnnouncement } from "./discord/announce.js";
+import { formatAmount } from "./discord/render.js";
 
 /**
- * Background watchdog. Runs three independent ticks on the same interval:
+ * Background watchdog. Runs four independent ticks on the same interval:
  *
  * 1. Pending-refund: bets stuck in `pending` past
  *    WATCHDOG_PENDING_REFUND_MINUTES auto-refund. Off by default (0).
  *
- * 2. 24h-deadline-nudge: for `funded` bets where `now < deadline` and
- *    `deadline - now ∈ [22h, 26h]`, DM both parties once with a reminder.
- *    Idempotent via `nudge_24h_sent_at`. Disabled if WATCHDOG_NUDGE=false.
+ * 2. Deadline-nudges (24h + 2h): for `funded` bets where deadline is
+ *    approaching, DM both parties once. Idempotent via
+ *    `nudge_24h_sent_at` / `nudge_2h_sent_at`. Disabled if
+ *    WATCHDOG_NUDGE_ENABLED=false.
  *
- * 3. 2h-deadline-nudge: same but for the 1.5h–2.5h window. Idempotent via
- *    `nudge_2h_sent_at`.
+ * 3. Cancel-expiry: clears /cancel requests that have sat 24h without
+ *    Agree/Deny. Always on (we promise users this 24h auto-expire).
+ *
+ * 4. Arbiter-stale: DMs admins once when /requestarbiter has gone >24h
+ *    without an /arbiter-claim. Always on; idempotent via
+ *    `arbiter_nudge_sent_at`.
  *
  * Saybet's #1 dispute-prevention feature. Mechanically the bot still
  * arbitrates — but nudges keep most users from drifting into the arbiter
@@ -48,6 +54,11 @@ export function startWatchdog(client: Client): NodeJS.Timeout {
       await tickCancelExpiry(client);
     } catch (e) {
       console.error("[watchdog] cancel-expiry tick error:", e);
+    }
+    try {
+      await tickArbiterStale(client);
+    } catch (e) {
+      console.error("[watchdog] arbiter-stale tick error:", e);
     }
   };
 
@@ -171,6 +182,73 @@ async function tickDeadlineNudges(client: Client) {
       .update(bets)
       .set({ nudge2hSentAt: now })
       .where(eq(bets.id, b.id));
+  }
+}
+
+/**
+ * Stale-arbiter nudge. /requestarbiter sets arbiter_requested_at but no admin
+ * has run /arbiter-claim within 24h → DM every admin once and mark
+ * arbiter_nudge_sent_at so we don't re-spam them. Fires regardless of the
+ * WATCHDOG_NUDGE_ENABLED switch — arbiter requests are load-bearing for
+ * dispute resolution and can't be silenced.
+ */
+async function tickArbiterStale(client: Client) {
+  const d = getDb(env.DATABASE_URL);
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const stale = await d
+    .select()
+    .from(bets)
+    .where(
+      and(
+        sql`${bets.arbiterRequestedAt} IS NOT NULL`,
+        sql`${bets.arbiterDiscordId} IS NULL`,
+        sql`${bets.arbiterNudgeSentAt} IS NULL`,
+        lt(bets.arbiterRequestedAt, cutoff),
+      ),
+    );
+  if (stale.length === 0) return;
+  const admins = adminDiscordIds();
+  if (admins.length === 0) {
+    // No admins configured — log loudly so the operator notices.
+    console.warn(
+      `[watchdog] ${stale.length} arbiter request(s) >24h old but ADMIN_DISCORD_IDS is empty`,
+    );
+    return;
+  }
+  for (const b of stale) {
+    const requestedAgo = Math.round(
+      (Date.now() - new Date(b.arbiterRequestedAt!).getTime()) / 3_600_000,
+    );
+    const body = [
+      `🛎️ **Stale arbiter request** — bet \`${b.shortcode}\` has been waiting **${requestedAgo}h** with no admin claim.`,
+      `Chain: ${b.chain === "solana" ? "Solana" : "Base"} · Stake: ${formatAmount(BigInt(b.amount))} USDC each`,
+      `Challenger: <@${b.challengerId}> · Accepter: <@${b.accepterId ?? "?"}>`,
+      `Requested by: <@${b.arbiterRequestedBy ?? "?"}>`,
+      ``,
+      `Run \`/arbiter-claim bet_id:${b.shortcode}\` to take the case.`,
+    ].join("\n");
+    let delivered = 0;
+    for (const adminId of admins) {
+      try {
+        const u = await client.users.fetch(adminId);
+        await u.send(body);
+        delivered++;
+      } catch (e) {
+        console.warn(
+          `[watchdog] stale-arbiter DM to admin ${adminId} for ${b.shortcode} failed:`,
+          String(e),
+        );
+      }
+    }
+    // Mark sent so we don't re-DM, even if we couldn't reach every admin —
+    // re-running every interval would spam those that we DID reach.
+    await d
+      .update(bets)
+      .set({ arbiterNudgeSentAt: new Date() })
+      .where(eq(bets.id, b.id));
+    console.log(
+      `[watchdog] arbiter-stale nudge sent for ${b.shortcode} (${delivered}/${admins.length} admins reached)`,
+    );
   }
 }
 

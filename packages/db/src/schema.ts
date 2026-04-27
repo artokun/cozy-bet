@@ -88,6 +88,10 @@ export const bets = pgTable(
     arbiterRequestedAt: timestamp("arbiter_requested_at", { withTimezone: true }),
     arbiterRequestedBy: text("arbiter_requested_by"),
     arbiterDiscordId: text("arbiter_discord_id"),
+    /** Watchdog stale-arbiter nudge marker. Set when an unclaimed arbiter
+     *  request passes its 24h grace window and the bot has DMed admins to
+     *  remind them. One-shot — after this is set the watchdog stops nagging. */
+    arbiterNudgeSentAt: timestamp("arbiter_nudge_sent_at", { withTimezone: true }),
     /** Winner's chosen dunk GIF after resolution. dunk_posted_at is set when
      *  the bot posts the celebration in the bet's channel. */
     dunkGifUrl: text("dunk_gif_url"),

@@ -1,0 +1,1 @@
+ALTER TABLE "bets" ADD COLUMN "arbiter_nudge_sent_at" timestamp with time zone;
