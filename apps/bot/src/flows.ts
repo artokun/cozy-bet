@@ -1139,19 +1139,25 @@ export async function setDunkGif(args: {
   if (bet.winnerId !== args.winnerId) {
     throw new Error("only the winner can pick a dunk GIF");
   }
-  if (bet.dunkPostedAt) {
-    throw new Error("dunk already posted for this bet");
-  }
   const loserId =
     bet.winnerId && bet.accepterId
       ? bet.winnerId === bet.challengerId
         ? bet.accepterId
         : bet.challengerId
       : null;
-  await d
+  // Atomic claim: two concurrent SelectMenu submissions from the winner
+  // (e.g. fast double-tap, gateway retry) would otherwise both pass the
+  // dunkPostedAt check and both fire safeChannelSend, posting duplicate
+  // embeds in the bet's channel. Conditional UPDATE ensures only one
+  // wins.
+  const claimed = await d
     .update(bets)
     .set({ dunkGifUrl: args.url, dunkPostedAt: new Date() })
-    .where(eq(bets.id, args.betId));
+    .where(and(eq(bets.id, args.betId), isNull(bets.dunkPostedAt)))
+    .returning();
+  if (claimed.length === 0) {
+    throw new Error("dunk already posted for this bet");
+  }
   await d.insert(betEvents).values({
     betId: args.betId,
     actorDiscordId: args.winnerId,
