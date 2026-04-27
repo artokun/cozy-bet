@@ -52,18 +52,103 @@ bd close <id>         # Complete work
 
 ## Build & Test
 
-_Add your build and test commands here_
-
+Bot + web typecheck:
 ```bash
-# Example:
-# npm install
-# npm test
+pnpm --filter @cozy-bet/bot exec tsc --noEmit
+pnpm --filter @cozy-bet/web exec tsc --noEmit
+```
+
+Solana program:
+```bash
+cd apps/program && anchor build                 # rust → bytecode + IDL
+anchor test --skip-local-validator --provider.cluster localnet  # against running solana-test-validator
+```
+
+Solidity escrow:
+```bash
+cd apps/contracts && forge build && forge test
+```
+
+DB migrations (Postgres on docker port 5433):
+```bash
+pnpm db:up                                     # start docker
+pnpm --filter @cozy-bet/db generate            # after schema.ts changes
+pnpm --filter @cozy-bet/db migrate             # apply
+```
+
+Verifying both deployed contracts respond as expected (read-only, no funds spent):
+```bash
+pnpm testnet:smoke
+```
+
+Full bet-cycle test on testnet (spends a little testnet money):
+```bash
+pnpm testnet:lifecycle:solana                  # 0.05 SOL from resolver
+RESOLVER_PRIVATE_KEY=0x... pnpm testnet:lifecycle:base  # 100 USDC + ~0.0005 ETH
 ```
 
 ## Architecture Overview
 
-_Add a brief overview of your project architecture_
+Bi-chain Discord betting bot. Each bet lives entirely on one chain:
+- **Solana:** Anchor program at `nqQkfoyxtzxDBHmyxnJs3KwQVvz5CoFffH8vcQzS6yt`
+  on devnet. Per-bet PDA + vault, mockUSDC SPL token.
+- **Base:** Solidity escrow at `0xffcC554C4157B9363ab561237e3cc02626775F71`
+  on Base Sepolia. `mapping(betId => Bet)` storage, real testnet USDC.
+
+Chain dispatch lives in `apps/bot/src/chain.ts` — flows.ts reads
+`bet.chain` and routes initialize/resolve/draw/refund/arbiterResolve
+to the Solana adapter (`solana.ts`) or EVM adapter (`evm.ts`).
+
+Web app:
+- `/link/[sessionId]?chain=solana|base` — wallet linking. Solana uses
+  `@solana/wallet-adapter`; Base uses wagmi v3 + Coinbase Smart Wallet.
+- `/fund/[betId]` — chain-aware deposit (Anchor on Solana,
+  approve+deposit via wagmi on Base).
+- `/admin/arbiter-cases` — read-only ops dashboard, gated by
+  `ADMIN_API_TOKEN` bearer header.
+- `/explorer` — public bet feed.
+
+Bot has a Postgres state machine (Drizzle ORM, schema in
+`packages/db/src/schema.ts`):
+`Proposed → Accepted → Pending → Funded → Resolved/Drawn/Refunded` plus
+`Canceled` and `Disputed`. Migrations are sequential — never edit a
+landed migration; add a new one.
+
+Watchdog (`apps/bot/src/watchdog.ts`) runs four ticks per interval:
+pending-refund (off by default), 24h+2h deadline nudges, cancel-expirer,
+stale-arbiter (admin nudge after 24h unclaimed).
+
+LLM disambig: every `/saybet` runs through Anthropic Claude Haiku 4.5
+to convert ambiguous phrasing into a canonical sentence. The keccak256
+of that canonical is the on-chain `termsHash` — third parties reading
+the explorer can verify what the bet was for.
 
 ## Conventions & Patterns
 
-_Add your project-specific conventions here_
+- **Issue tracker:** beads (`bd`). Read `bd prime` once. Don't use
+  TodoWrite, TaskCreate, or markdown TODO lists. Don't write
+  MEMORY.md files — `bd remember` for persistent knowledge.
+- **Bet identifiers:** every bet has a 6-char shortcode (e.g. `K7M2RX`)
+  alongside its bigint `id`. User-facing copy uses the shortcode;
+  on-chain calls use the bigint.
+- **Per-side fee bps:** default 250bps each side, floor 150bps
+  (`MIN_DISCOUNTED_FEE_BPS`). `/share` discount drops to 150bps via
+  `chainSetFeeBpsForSide`.
+- **4-owner treasury:** fees split four ways at resolve time. Configure
+  via `update_config` (Solana) or `setTreasuryOwner` (Base). Squads /
+  Safe migration runbooks in `docs/`.
+- **Chain-agnostic types in flows.ts:** `bet.chain` is `"solana" | "base"`,
+  wallets are passed as strings (base58 / 0x-hex), the dispatcher
+  parses to native types inside each adapter. Never bake chain
+  branching into flows.ts — push it into chain.ts.
+- **Idempotent state transitions:** anything driven by external state
+  (deposits, on-chain status) reads on-chain truth on every tick.
+  Web → bot callbacks are hints, not authority — bot re-fetches.
+- **Termshash binding:** description (verbatim) + termsCanonical
+  (LLM-disambig) + on-chain termsHash all carry together. Don't break
+  this chain — it's the audit story.
+- **Slash command file structure:** builders + handlers in
+  `apps/bot/src/discord/commands.ts`, dispatcher in
+  `apps/bot/src/discord/interactions.ts`. Adding a new command means
+  building, registering in `commandDefinitions`, writing the handler,
+  and adding a `case` in the router.
