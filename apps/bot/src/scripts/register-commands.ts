@@ -1,6 +1,13 @@
 import { REST, Routes } from "discord.js";
 import { env } from "../env.js";
-import { commandDefinitions } from "../discord/commands.js";
+import {
+  commandDefinitions,
+  validateCommandDefinitions,
+} from "../discord/commands.js";
+
+// Fail fast on duplicate names, Discord-illegal characters, etc., so the
+// developer sees a useful error before the round-trip to Discord.
+validateCommandDefinitions(commandDefinitions);
 
 const rest = new REST({ version: "10" }).setToken(env.DISCORD_BOT_TOKEN);
 

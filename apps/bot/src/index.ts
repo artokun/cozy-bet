@@ -5,6 +5,15 @@ import {
   routeSelectMenu,
   routeSlash,
 } from "./discord/interactions.js";
+import {
+  commandDefinitions,
+  validateCommandDefinitions,
+} from "./discord/commands.js";
+
+// Fail fast on duplicate / malformed slash command names so we never push
+// a broken catalog up to Discord. Throwing here aborts startup before the
+// gateway connects.
+validateCommandDefinitions(commandDefinitions);
 import { startApi } from "./api.js";
 import { startWatchdog } from "./watchdog.js";
 import {

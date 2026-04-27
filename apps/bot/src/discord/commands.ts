@@ -303,6 +303,43 @@ export const leaderboardCmd = new SlashCommandBuilder()
       ),
   );
 
+/**
+ * Pre-flight validate the commandDefinitions array. Discord names must
+ * match `^[\w-]{1,32}$` (lowercase letters/digits/dash/underscore, ≤32
+ * chars), be unique across the array, and each command can have at most
+ * 25 options. Discord rejects malformed registrations with a long
+ * round-trip + confusing error — we'd rather throw locally at import.
+ *
+ * Called by both register-commands.ts and the bot startup so a typo
+ * fails fast in dev, never silently in prod.
+ */
+export function validateCommandDefinitions(
+  defs: RESTPostAPIApplicationCommandsJSONBody[],
+): void {
+  const seen = new Set<string>();
+  const NAME_RE = /^[\w-]{1,32}$/;
+  for (const cmd of defs) {
+    if (!cmd.name) {
+      throw new Error("command missing name");
+    }
+    if (!NAME_RE.test(cmd.name)) {
+      throw new Error(
+        `command name "${cmd.name}" violates Discord's ^[\\w-]{1,32}$ rule`,
+      );
+    }
+    if (seen.has(cmd.name)) {
+      throw new Error(`duplicate command name: ${cmd.name}`);
+    }
+    seen.add(cmd.name);
+    const options = (cmd as { options?: unknown[] }).options;
+    if (Array.isArray(options) && options.length > 25) {
+      throw new Error(
+        `command "${cmd.name}" has ${options.length} options (Discord max 25)`,
+      );
+    }
+  }
+}
+
 export const commandDefinitions: RESTPostAPIApplicationCommandsJSONBody[] = [
   saybet.toJSON(),
   mybets.toJSON(),
