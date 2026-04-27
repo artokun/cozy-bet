@@ -717,6 +717,42 @@ export async function claimDraw(betId: bigint, actorId: string) {
   return { outcome: "pending" as const };
 }
 
+/**
+ * Atomic "claim the resolution slot" — only one caller can transition
+ * a bet from "no resolution" to "resolution-in-flight" via this gate.
+ * Subsequent callers see zero affected rows and throw.
+ *
+ * The lock value is `PENDING:<reason>` written into resolution_tx_sig.
+ * Once the on-chain call returns the real sig, callers overwrite it
+ * with the tx hash. On failure, callers reset to NULL via
+ * releaseResolutionLock so the user can retry.
+ *
+ * Used to protect concurrent finalizeResolve / finalizeDraw /
+ * arbiterDecide / refundBet races where both calls would otherwise
+ * fire the irreversible chain* call independently.
+ */
+async function claimResolutionLock(betId: bigint, reason: string) {
+  const d = db();
+  const claimed = await d
+    .update(bets)
+    .set({ resolutionTxSig: `PENDING:${reason}` })
+    .where(and(eq(bets.id, betId), isNull(bets.resolutionTxSig)))
+    .returning();
+  if (claimed.length === 0) {
+    throw new Error(
+      "another resolution is already in flight for this bet (race lost)",
+    );
+  }
+}
+
+async function releaseResolutionLock(betId: bigint) {
+  const d = db();
+  await d
+    .update(bets)
+    .set({ resolutionTxSig: null })
+    .where(eq(bets.id, betId));
+}
+
 async function finalizeDraw(betId: bigint) {
   const d = db();
   const bet = await getBet(betId);
@@ -730,11 +766,18 @@ async function finalizeDraw(betId: bigint) {
   if (!challengerWallet || !accepterWallet) {
     throw new Error("participant wallets missing");
   }
-  const sig = await chainDraw(chain, {
-    betId,
-    challenger: challengerWallet,
-    accepter: accepterWallet,
-  });
+  await claimResolutionLock(betId, "draw");
+  let sig: string;
+  try {
+    sig = await chainDraw(chain, {
+      betId,
+      challenger: challengerWallet,
+      accepter: accepterWallet,
+    });
+  } catch (e) {
+    await releaseResolutionLock(betId);
+    throw e;
+  }
   await d
     .update(bets)
     .set({
@@ -763,10 +806,17 @@ async function finalizeResolve(betId: bigint, winnerDiscordId: string) {
     throw new Error(`winner has no linked ${chain} wallet`);
   }
 
-  const sig = await chainResolve(chain, {
-    betId,
-    winner: winnerWallet,
-  });
+  await claimResolutionLock(betId, "resolve");
+  let sig: string;
+  try {
+    sig = await chainResolve(chain, {
+      betId,
+      winner: winnerWallet,
+    });
+  } catch (e) {
+    await releaseResolutionLock(betId);
+    throw e;
+  }
   await d
     .update(bets)
     .set({
@@ -1369,10 +1419,17 @@ export async function arbiterDecide(args: {
   if (!winnerWallet) {
     throw new Error(`winner has no linked ${chain} wallet`);
   }
-  const sig = await chainArbiterResolve(chain, {
-    betId: args.betId,
-    winner: winnerWallet,
-  });
+  await claimResolutionLock(args.betId, "arbiter-decide");
+  let sig: string;
+  try {
+    sig = await chainArbiterResolve(chain, {
+      betId: args.betId,
+      winner: winnerWallet,
+    });
+  } catch (e) {
+    await releaseResolutionLock(args.betId);
+    throw e;
+  }
   await d
     .update(bets)
     .set({
@@ -1435,11 +1492,18 @@ export async function refundBet(betId: bigint) {
   if (!challengerWallet || !accepterWallet) {
     throw new Error("participant wallets missing");
   }
-  const sig = await chainRefund(chain, {
-    betId,
-    challenger: challengerWallet,
-    accepter: accepterWallet,
-  });
+  await claimResolutionLock(betId, "refund");
+  let sig: string;
+  try {
+    sig = await chainRefund(chain, {
+      betId,
+      challenger: challengerWallet,
+      accepter: accepterWallet,
+    });
+  } catch (e) {
+    await releaseResolutionLock(betId);
+    throw e;
+  }
   await d
     .update(bets)
     .set({ status: BetStatus.Refunded, resolvedAt: new Date(), resolutionTxSig: sig })
