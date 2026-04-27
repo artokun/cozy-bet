@@ -139,7 +139,7 @@ export const counterCmd = new SlashCommandBuilder()
     o.setName("bet_id").setDescription("bet id or shortcode").setRequired(true),
   )
   .addNumberOption((o) =>
-    o.setName("amount").setDescription("new amount in mUSDC").setMinValue(1),
+    o.setName("amount").setDescription("new amount in USDC").setMinValue(1),
   )
   .addStringOption((o) =>
     o
@@ -587,7 +587,7 @@ export async function handleCounter(i: ChatInputCommandInteraction) {
     const lines = [`<@${i.user.id}> countered bet \`${bet.shortcode}\`:`];
     if (newAmountAtoms !== null) {
       lines.push(
-        `· stake: ${formatAmount(BigInt(bet.amount))} → **${formatAmount(newAmountAtoms)}** mUSDC`,
+        `· stake: ${formatAmount(BigInt(bet.amount))} → **${formatAmount(newAmountAtoms)}** USDC`,
       );
     }
     if (newDescription !== null) {
@@ -990,11 +990,13 @@ export async function handleStatus(i: ChatInputCommandInteraction) {
   const accepterTag = bet.accepterId
     ? `<@${bet.accepterId}>${accepterRel ? ` (${accepterRel})` : ""}`
     : "_(open — first to claim)_";
+  const chainLabel = bet.chain === "solana" ? "Solana" : "Base";
+  const potUsdc = (Number(BigInt(bet.amount)) / 1e6 * 2).toFixed(2);
   const lines: string[] = [
     `**Bet #${bet.shortcode}** — _${bet.status}_`,
     `> ${bet.description}`,
     `<@${bet.challengerId}>${challengerRel ? ` (${challengerRel})` : ""} vs ${accepterTag}`,
-    `${tokenAmount} mUSDC each · pot ${(Number(BigInt(bet.amount)) / 1e6 * 2).toFixed(2)} mUSDC`,
+    `${tokenAmount} USDC each · pot ${potUsdc} USDC · ${chainLabel}`,
   ];
   if (bet.deadline) {
     const deadlineUnix = Math.floor(new Date(bet.deadline).getTime() / 1000);
@@ -1017,6 +1019,17 @@ export async function handleStatus(i: ChatInputCommandInteraction) {
     lines.push(
       `Claims — challenger: ${bet.challengerClaimsWinner ? `<@${bet.challengerClaimsWinner}>` : "—"} · accepter: ${bet.accepterClaimsWinner ? `<@${bet.accepterClaimsWinner}>` : "—"}`,
     );
+  }
+  if (bet.arbiterRequestedAt) {
+    const claimed = bet.arbiterDiscordId
+      ? ` (claimed by <@${bet.arbiterDiscordId}>)`
+      : ` _(awaiting admin claim)_`;
+    lines.push(
+      `🛎️ Arbiter requested by <@${bet.arbiterRequestedBy ?? "?"}>${claimed}`,
+    );
+  }
+  if (bet.dunkGifUrl) {
+    lines.push(`🏀 Dunk GIF posted: ${bet.dunkGifUrl}`);
   }
   await i.reply({ content: lines.join("\n") });
 }
@@ -1053,7 +1066,7 @@ export async function handleLeaderboard(i: ChatInputCommandInteraction) {
     const won = (Number(r.totalWon) / 1e6).toFixed(2);
     const wagered = (Number(r.totalWagered) / 1e6).toFixed(2);
     const winRate = r.bets > 0 ? Math.round((r.wins / r.bets) * 100) : 0;
-    return `**${idx + 1}.** <@${r.discordId}> — won ${won} mUSDC · wagered ${wagered} · ${winRate}% win rate (${r.bets} bets)`;
+    return `**${idx + 1}.** <@${r.discordId}> — won ${won} USDC · wagered ${wagered} · ${winRate}% win rate (${r.bets} bets)`;
   });
   if (lines.length === 0) {
     await i.reply({
@@ -1139,7 +1152,7 @@ export async function handleHelp(i: ChatInputCommandInteraction) {
       "• `/mybets` — your active bets",
       "• `/open-bets` — unclaimed open bets in this server (anyone can take)",
       "• `/leaderboard [by:won|wagered|winrate]` — server leaderboard",
-      "• `/balance` — your wallet + mUSDC balance",
+      "• `/balance` — your linked wallets + USDC balances",
       "• `/linkwallet` — link or relink",
       "• `/help` — this message",
       "",
@@ -1337,8 +1350,9 @@ async function sendFundLinks(i: ButtonInteraction, betId: bigint) {
   // Repeat the verbatim canonical terms in the deposit DM so neither party
   // can later claim they "didn't know" what they were agreeing to. This is
   // the second of three repetitions (preview embed → deposit DM → resolve DM).
+  const chainLabel = bet.chain === "solana" ? "Solana" : "Base";
   const dmContent = [
-    `**Deposit ${tokenAmount} mUSDC** to fund bet \`${bet.shortcode}\`:`,
+    `**Deposit ${tokenAmount} USDC on ${chainLabel}** to fund bet \`${bet.shortcode}\`:`,
     fundUrl,
     "",
     "⚠️  What you're agreeing to:",
@@ -1559,7 +1573,7 @@ export async function handleDoubleOrNothing(
           : parent.challengerId;
       void winnerId;
       const msg = await ch.send({
-        content: `🎲 **Double or Nothing!** <@${parent.winnerId}> — <@${i.user.id}> wants another shot for ${newAmount.toFixed(2)} mUSDC. Bet code: \`${result.shortcode}\` (rematch of \`${parent.shortcode}\`)`,
+        content: `🎲 **Double or Nothing!** <@${parent.winnerId}> — <@${i.user.id}> wants another shot for ${newAmount.toFixed(2)} USDC. Bet code: \`${result.shortcode}\` (rematch of \`${parent.shortcode}\`)`,
         embeds: [card.embed],
         components: [card.proposeRow(result.betId)],
       });

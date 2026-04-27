@@ -88,5 +88,5 @@ export function formatBet(b: {
   shortcode?: string;
 }): string {
   const idLabel = b.shortcode ?? `#${b.id}`;
-  return `• ${idLabel} — ${formatAmount(b.amount)} mUSDC — ${b.description} — _${b.status}_`;
+  return `• ${idLabel} — ${formatAmount(b.amount)} USDC — ${b.description} — _${b.status}_`;
 }
