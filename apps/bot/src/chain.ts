@@ -12,6 +12,11 @@ import { PublicKey } from "@solana/web3.js";
 import * as sol from "./solana.js";
 import * as evm from "./evm.js";
 import { env } from "./env.js";
+import {
+  explorerTxUrlFor,
+  type BaseNetwork,
+  type SolanaCluster,
+} from "./explorer.js";
 
 export type Chain = "solana" | "base";
 
@@ -163,13 +168,10 @@ export async function chainFetchBet(
 }
 
 export function chainExplorerTxUrl(chain: Chain, sig: string): string {
-  if (isSolana(chain)) {
-    // Solana explorer omits ?cluster on mainnet-beta but requires it for
-    // devnet / testnet. Match what env.SOLANA_CLUSTER says rather than
-    // hardcoding "devnet" — that was wrong on the day we go to mainnet.
-    return env.SOLANA_CLUSTER === "mainnet-beta"
-      ? `https://explorer.solana.com/tx/${sig}`
-      : `https://explorer.solana.com/tx/${sig}?cluster=${env.SOLANA_CLUSTER}`;
-  }
-  return evm.explorerTxUrl(sig);
+  return explorerTxUrlFor(
+    chain,
+    env.SOLANA_CLUSTER as SolanaCluster,
+    env.EVM_NETWORK as BaseNetwork,
+    sig,
+  );
 }

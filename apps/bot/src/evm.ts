@@ -228,11 +228,13 @@ export async function fetchBetOnChain(betId: bigint) {
   };
 }
 
+import { baseExplorerTxUrl } from "./explorer.js";
+
 export function explorerTxUrl(sig: string): string {
-  const base = CHAIN.id === baseMainnet.id
-    ? "https://basescan.org"
-    : "https://sepolia.basescan.org";
-  return `${base}/tx/${sig}`;
+  return baseExplorerTxUrl(
+    CHAIN.id === baseMainnet.id ? "base" : "base-sepolia",
+    sig,
+  );
 }
 
 /** Read the USDC balance of a Base address. Returns null if the EVM adapter
