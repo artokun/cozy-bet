@@ -105,6 +105,15 @@ export async function applyShareDiscount(args: {
     ? bet.challengerShareUrl
     : bet.accepterShareUrl;
   if (existing) {
+    // Existing PENDING:* means a sibling /confirm-share is mid-flight —
+    // surface that as a retry-shortly hint, not as "you already redeemed"
+    // (the partial redeem might still roll back if its on-chain call
+    // throws and the catch path clears the slot).
+    if (existing.startsWith("PENDING:")) {
+      throw new Error(
+        "another /confirm-share for this bet is in flight — retry in a few seconds",
+      );
+    }
     return { alreadyApplied: true as const, url: existing };
   }
   // Discounts only make sense before the bet pays out — after Resolved/Drawn
@@ -144,11 +153,18 @@ export async function applyShareDiscount(args: {
     )
     .returning();
   if (claimedRows.length === 0) {
-    // Race lost OR slot already redeemed — refetch and report.
+    // Race lost OR slot already redeemed — refetch. A PENDING:* value
+    // here means a sibling call is still in flight; surface the same
+    // "retry shortly" hint as the entry-time check.
     const after = await getBet(args.betId);
     const url = isChallenger
       ? after?.challengerShareUrl
       : after?.accepterShareUrl;
+    if (url?.startsWith("PENDING:")) {
+      throw new Error(
+        "another /confirm-share for this bet is in flight — retry in a few seconds",
+      );
+    }
     return {
       alreadyApplied: true as const,
       url: url ?? "(redeemed by a concurrent request)",
