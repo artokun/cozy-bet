@@ -13,6 +13,7 @@
  */
 import { NextResponse } from "next/server";
 import { randomBytes } from "node:crypto";
+import { sanitizeNext } from "../../../../../lib/session";
 
 const STATE_COOKIE = "cozy-bet-oauth-state";
 
@@ -38,8 +39,11 @@ export async function GET(req: Request) {
     );
   }
   // Allow ?next=/some/path to bounce back after login; default /admin/arbiter-cases.
+  // Sanitize to relative same-origin paths only — never trust user input
+  // here even though we're about to sign it in the state cookie. Signing
+  // protects integrity, not policy.
   const url = new URL(req.url);
-  const next = url.searchParams.get("next") ?? "/admin/arbiter-cases";
+  const next = sanitizeNext(url.searchParams.get("next"));
   const state = randomBytes(16).toString("base64url");
   const stateCookie = `${STATE_COOKIE}=${encodeURIComponent(JSON.stringify({ state, next }))}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${
     process.env.NODE_ENV === "production" ? "; Secure" : ""

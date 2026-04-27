@@ -15,9 +15,11 @@
  * can still get a session, they just won't have access to /admin/*.
  */
 import { NextResponse } from "next/server";
+import { timingSafeEqual } from "node:crypto";
 import {
   freshExpiry,
   makeSessionCookie,
+  sanitizeNext,
 } from "../../../../../lib/session";
 
 const STATE_COOKIE = "cozy-bet-oauth-state";
@@ -59,7 +61,16 @@ export async function GET(req: Request) {
   } catch {
     return NextResponse.json({ error: "bad state cookie" }, { status: 400 });
   }
-  if (stashed.state !== state) {
+  // Timing-safe state comparison. The risk is theoretical (the attacker
+  // doesn't repeatedly probe this endpoint) but the rest of the codebase
+  // uses timingSafeEqual for HMAC checks — keep the convention consistent
+  // so a future reader doesn't trip over the inconsistency.
+  const stashedBuf = Buffer.from(stashed.state);
+  const stateBuf = Buffer.from(state);
+  if (
+    stashedBuf.length !== stateBuf.length ||
+    !timingSafeEqual(stashedBuf, stateBuf)
+  ) {
     return NextResponse.json({ error: "state mismatch" }, { status: 400 });
   }
 
@@ -125,7 +136,11 @@ export async function GET(req: Request) {
 
   // Clear the state cookie + set the session cookie. We can pass two
   // Set-Cookie headers via Headers#append.
-  const headers = new Headers({ location: stashed.next });
+  // Re-sanitize stashed.next defensively, even though login validated it.
+  // The cookie is HMAC-signed (integrity), not policy-checked — a future
+  // refactor that bypasses login (e.g. tests, programmatic flows) won't
+  // accidentally introduce an open redirect here.
+  const headers = new Headers({ location: sanitizeNext(stashed.next) });
   headers.append("set-cookie", sessionCookie);
   headers.append(
     "set-cookie",

@@ -42,7 +42,13 @@ export function verifySession(
   raw: string,
   secret: string,
 ): SessionPayload | null {
-  const [payload, sig] = raw.split(".");
+  // Require exactly 2 segments. A naive `raw.split(".")` + destructuring
+  // silently drops trailing segments — fragile if the encoding ever
+  // changes (today base64url contains no `.`, but a future migration to
+  // standard base64 would slip past).
+  const parts = raw.split(".");
+  if (parts.length !== 2) return null;
+  const [payload, sig] = parts;
   if (!payload || !sig) return null;
   const expected = sign(payload, secret);
   let valid = false;
@@ -108,6 +114,23 @@ export function clearSessionCookie(): string {
 
 export function freshExpiry(): number {
   return Date.now() + SESSION_TTL_MS;
+}
+
+/**
+ * Sanitize a post-login `next` redirect to prevent open-redirect attacks.
+ * Only same-origin absolute paths are allowed (must start with "/" and
+ * NOT with "//" — the latter is a protocol-relative URL that browsers
+ * resolve against the current scheme).
+ *
+ * Anything else (full URLs, missing slash, query-only) collapses to the
+ * fallback default.
+ */
+export function sanitizeNext(raw: string | null | undefined): string {
+  const fallback = "/admin/arbiter-cases";
+  if (!raw) return fallback;
+  // Must start with `/` followed by a non-`/` character.
+  if (!/^\/[^/]/.test(raw)) return fallback;
+  return raw;
 }
 
 /** True iff the resolved Discord ID is in the comma-separated env list. */
