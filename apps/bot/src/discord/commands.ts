@@ -1897,11 +1897,6 @@ export async function handleDoubleOrNothing(
         chainDepth: Number(parent.chainDepth ?? 0) + 1,
         parentShortcode: parent.shortcode,
       });
-      const winnerId =
-        parent.winnerId === parent.challengerId
-          ? parent.accepterId
-          : parent.challengerId;
-      void winnerId;
       const msg = await ch.send({
         content: `🎲 **Double or Nothing!** <@${parent.winnerId}> — <@${i.user.id}> wants another shot for ${newAmount.toFixed(2)} USDC. Bet code: \`${result.shortcode}\` (rematch of \`${parent.shortcode}\`)`,
         embeds: [card.embed],
