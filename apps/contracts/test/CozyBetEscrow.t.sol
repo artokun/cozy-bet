@@ -546,4 +546,153 @@ contract CozyBetEscrowTest is Test {
         escrow.setDefaultFeeBps(300);
         assertEq(escrow.defaultFeeBps(), 300);
     }
+
+    // -----------------------------------------------------------------
+    // Fuzz tests — invariants that must hold for any (amount, bps).
+    //
+    // These run with forge's default 256 random inputs each. The
+    // hand-rolled tests above cover specific edge cases; these catch
+    // arithmetic / split bugs that random inputs surface.
+    // -----------------------------------------------------------------
+
+    /// @notice For any well-formed bet, the contract's accounting must
+    ///         balance: pot = winnerPayout + standardFee + arbiterFee.
+    ///         No funds get created or destroyed in a resolve.
+    function testFuzz_resolve_potBalances(uint256 stake, uint16 cBps, uint16 aBps)
+        public
+    {
+        // Constrain inputs to realistic ranges.
+        stake = bound(stake, 1e6, 1_000_000e6); // 1 USDC to 1M USDC
+        cBps = uint16(bound(cBps, 150, 1000)); // 1.5%–10% per side
+        aBps = uint16(bound(aBps, 150, 1000));
+
+        // Mint enough for both sides.
+        usdc.mint(alice, stake);
+        usdc.mint(bob, stake);
+
+        vm.prank(resolver);
+        escrow.initializeBet(BET_ID, stake, alice, bob);
+
+        // If the fuzzed bps differ from default, apply the discount.
+        if (cBps < escrow.defaultFeeBps()) {
+            vm.prank(resolver);
+            escrow.setFeeBpsForSide(BET_ID, alice, cBps);
+        }
+        if (aBps < escrow.defaultFeeBps()) {
+            vm.prank(resolver);
+            escrow.setFeeBpsForSide(BET_ID, bob, aBps);
+        }
+
+        vm.prank(alice);
+        escrow.deposit(BET_ID);
+        vm.prank(bob);
+        escrow.deposit(BET_ID);
+
+        uint256 escrowBalanceBefore = usdc.balanceOf(address(escrow));
+        assertEq(escrowBalanceBefore, stake * 2, "escrow holds full pot pre-resolve");
+
+        uint256 winnerBefore = usdc.balanceOf(alice);
+        uint256 ownerSumBefore = usdc.balanceOf(owner1) + usdc.balanceOf(owner2)
+            + usdc.balanceOf(owner3) + usdc.balanceOf(owner4);
+
+        vm.prank(resolver);
+        escrow.resolve(BET_ID, alice);
+
+        uint256 winnerDelta = usdc.balanceOf(alice) - winnerBefore;
+        uint256 ownerSumDelta = (
+            usdc.balanceOf(owner1) + usdc.balanceOf(owner2) + usdc.balanceOf(owner3)
+                + usdc.balanceOf(owner4)
+        ) - ownerSumBefore;
+
+        // INVARIANT: every atom of the pot accounted for.
+        assertEq(winnerDelta + ownerSumDelta, stake * 2, "no atoms created or lost");
+        // INVARIANT: escrow vault drained.
+        assertEq(usdc.balanceOf(address(escrow)), 0, "escrow drained on resolve");
+    }
+
+    /// @notice Treasury owners' shares sum to exactly standardFee — the
+    ///         integer-division remainder must be routed (not lost).
+    function testFuzz_resolve_treasurySumEqualsStandardFee(uint256 stake)
+        public
+    {
+        stake = bound(stake, 1e6, 1_000_000e6);
+
+        usdc.mint(alice, stake);
+        usdc.mint(bob, stake);
+
+        vm.prank(resolver);
+        escrow.initializeBet(BET_ID, stake, alice, bob);
+        vm.prank(alice);
+        escrow.deposit(BET_ID);
+        vm.prank(bob);
+        escrow.deposit(BET_ID);
+
+        // Default 250 + 250 bps.
+        uint256 expectedFee = (stake * 250 + stake * 250) / 10_000;
+
+        uint256[4] memory before;
+        before[0] = usdc.balanceOf(owner1);
+        before[1] = usdc.balanceOf(owner2);
+        before[2] = usdc.balanceOf(owner3);
+        before[3] = usdc.balanceOf(owner4);
+
+        vm.prank(resolver);
+        escrow.resolve(BET_ID, alice);
+
+        uint256 ownerSum = (usdc.balanceOf(owner1) - before[0])
+            + (usdc.balanceOf(owner2) - before[1]) + (usdc.balanceOf(owner3) - before[2])
+            + (usdc.balanceOf(owner4) - before[3]);
+
+        // INVARIANT: 4 owners' shares = standardFee, exactly.
+        assertEq(ownerSum, expectedFee, "treasury sum matches standardFee");
+        // INVARIANT: slot 0 always >= other slots (remainder routes there).
+        uint256 share1 = usdc.balanceOf(owner1) - before[0];
+        uint256 share2 = usdc.balanceOf(owner2) - before[1];
+        uint256 share3 = usdc.balanceOf(owner3) - before[2];
+        uint256 share4 = usdc.balanceOf(owner4) - before[3];
+        assertGe(share1, share2, "slot 0 >= slot 1");
+        assertGe(share1, share3, "slot 0 >= slot 2");
+        assertGe(share1, share4, "slot 0 >= slot 3");
+        // Other 3 owners get equal shares.
+        assertEq(share2, share3, "slots 1 & 2 equal");
+        assertEq(share3, share4, "slots 2 & 3 equal");
+    }
+
+    /// @notice Draw refunds each side exactly amount — never less, never more.
+    function testFuzz_draw_refundsExactStake(uint256 stake) public {
+        stake = bound(stake, 1e6, 1_000_000e6);
+
+        usdc.mint(alice, stake);
+        usdc.mint(bob, stake);
+
+        vm.prank(resolver);
+        escrow.initializeBet(BET_ID, stake, alice, bob);
+        uint256 aliceBefore = usdc.balanceOf(alice);
+        uint256 bobBefore = usdc.balanceOf(bob);
+        vm.prank(alice);
+        escrow.deposit(BET_ID);
+        vm.prank(bob);
+        escrow.deposit(BET_ID);
+        vm.prank(resolver);
+        escrow.draw(BET_ID);
+
+        // INVARIANT: net delta is zero — they got back exactly what they put in.
+        assertEq(usdc.balanceOf(alice), aliceBefore, "alice net zero on draw");
+        assertEq(usdc.balanceOf(bob), bobBefore, "bob net zero on draw");
+        // INVARIANT: no fee taken on draws.
+        assertEq(usdc.balanceOf(owner1), 0, "no draw fee to owner1");
+    }
+
+    /// @notice setFeeBpsForSide is one-way: cannot increase fee.
+    function testFuzz_setFeeBps_cannotIncrease(uint16 newBps) public {
+        // Constrain to >= default so any "set" would be a non-decrease.
+        newBps = uint16(bound(newBps, escrow.defaultFeeBps(), 1000));
+
+        vm.prank(resolver);
+        escrow.initializeBet(BET_ID, STAKE, alice, bob);
+
+        vm.prank(resolver);
+        vm.expectRevert(CozyBetEscrow.InvalidFeeBps.selector);
+        escrow.setFeeBpsForSide(BET_ID, alice, newBps);
+    }
 }

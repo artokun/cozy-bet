@@ -167,13 +167,28 @@ instruction (single-step rotation, the current authority signs to
 hand off — Squads multisig vault is the recommended target).
 Runbook: `docs/squads-multisig.md`.
 
-## Tests — Foundry/Anvil, 40 unit tests, 89% line coverage
+## Tests — Foundry/Anvil, 40 unit + 4 fuzz tests, 89% line coverage
 
 ```
 $ cd apps/contracts && forge test
 […]
-Suite result: ok. 40 passed; 0 failed; 0 skipped; finished in 28.88ms
+Suite result: ok. 44 passed; 0 failed; 0 skipped; finished in 36.08ms
 ```
+
+The fuzz tests run with forge's default 256 random inputs each (1024
+invariant checks total). They lock the rake math against arithmetic
+or split bugs that hand-rolled tests miss:
+
+- `testFuzz_resolve_potBalances` — for any (stake, cBps, aBps),
+  `winnerPayout + ownerSum == pot * 2` and the escrow vault drains
+  to zero. No atoms created or lost.
+- `testFuzz_resolve_treasurySumEqualsStandardFee` — 4 owners' shares
+  sum to exactly `standardFee`; slot 0 ≥ slots 1..3 (remainder
+  routes there); slots 1..3 are equal.
+- `testFuzz_draw_refundsExactStake` — both participants net zero on
+  a draw; no fee skimmed.
+- `testFuzz_setFeeBps_cannotIncrease` — discount is one-way under
+  any newBps ≥ default.
 
 Coverage:
 
