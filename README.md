@@ -347,6 +347,16 @@ cross-chain divergence). Skip them at your peril:
   `adapterIndex` so observability maps back to the specific provider.
   8 unit tests including the FakeBridgeAdapter integration smoke.
 
+- **Deposit monitor** — `apps/bot/src/bridge-monitor.ts`'s
+  `monitorBridgedDeposit({ adapter, depositId, timeoutMs, pollIntervalMs })`
+  polls until the deposit hits a terminal state (`confirmed` / `failed`)
+  or hits a timeout / abort. Returns a discriminated union with rich
+  timeout context (last non-terminal status + elapsed ms) for
+  debugging stuck deposits. `delay` and `now` are injectable so tests
+  don't depend on real timers; production defaults to `setTimeout` /
+  `Date.now`. Honors `AbortSignal`. 7 unit tests covering each
+  terminal path.
+
 ## Build & test (locally)
 
 ```bash
