@@ -337,6 +337,16 @@ cross-chain divergence). Skip them at your peril:
   (Squid, Mayan, CCTP V2) plug in by implementing the same interface;
   the fake doubles as a reference impl. 8 unit tests.
 
+- **Multi-provider quote router** — `apps/bot/src/bridge-router.ts`'s
+  `getBestQuoteAcrossProviders([squid, mayan, cctp], args)` fans
+  quote requests out to all adapters in parallel, tolerates per-provider
+  failures (rate limits / timeouts / 5xxs), validates the route once
+  up front (no pointless N round-trips on a known-bad route), and
+  returns a discriminated union — `ok` / `no_quotes` / `invalid_route`
+  — so callers exhaustively handle each case. Errors carry the
+  `adapterIndex` so observability maps back to the specific provider.
+  8 unit tests including the FakeBridgeAdapter integration smoke.
+
 ## Build & test (locally)
 
 ```bash
