@@ -8,8 +8,7 @@ import {
   type MessageEditOptions,
 } from "discord.js";
 import { getBet } from "../flows.js";
-import { getDb, users, betEvents } from "@cozy-bet/db";
-import { eq } from "drizzle-orm";
+import { getDb, betEvents } from "@cozy-bet/db";
 import { env } from "../env.js";
 import { formatAmount } from "./render.js";
 import { chainExplorerTxUrl, type Chain } from "../chain.js";
@@ -44,14 +43,6 @@ const STATUS_LABELS: Record<string, string> = {
 export async function updateAnnouncement(client: Client, betId: bigint) {
   const bet = await getBet(betId);
   if (!bet || !bet.announceMessageId) return;
-
-  const d = getDb(env.DATABASE_URL);
-  const challengerRow = (
-    await d.select().from(users).where(eq(users.discordId, bet.challengerId))
-  )[0];
-  const accepterRow = bet.accepterId
-    ? (await d.select().from(users).where(eq(users.discordId, bet.accepterId)))[0]
-    : null;
 
   const accepterLabel = bet.accepterId
     ? `<@${bet.accepterId}>`
@@ -130,13 +121,6 @@ export async function updateAnnouncement(client: Client, betId: bigint) {
     console.warn("[announce] failed to update message", String(e));
   }
 
-  // Tag both participants in-channel on terminal transitions for visibility
-  if (bet.status === "funded" || bet.status === "resolved" || bet.status === "refunded") {
-    // Only tag once per transition — detect via the bet_events audit log
-    // (simpler: do nothing here and let the caller optionally ping)
-  }
-  void challengerRow;
-  void accepterRow;
 }
 
 /**
