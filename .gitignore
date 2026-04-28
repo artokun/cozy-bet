@@ -13,8 +13,15 @@ build
 keys/
 *.keypair.json
 
-# Anchor
-apps/program/target
+# Anchor — ignore build artifacts but keep the IDL + deploy outputs
+# that downstream packages (bot, web, packages/shared) import.
+apps/program/target/*
+!apps/program/target/idl
+!apps/program/target/types
+!apps/program/target/deploy
+apps/program/target/deploy/*
+!apps/program/target/deploy/escrow-keypair.json
+!apps/program/target/deploy/escrow.so
 apps/program/.anchor
 apps/program/test-ledger
 
