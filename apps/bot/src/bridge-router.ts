@@ -34,7 +34,15 @@ export type ProviderQuoteError = {
 };
 
 export type ProviderQuoteResult =
-  | { kind: "ok"; quote: BridgeQuote; errors: ProviderQuoteError[] }
+  | {
+      kind: "ok";
+      quote: BridgeQuote;
+      /** Position in the input adapter array of the adapter that
+       *  produced the chosen quote. Use this to route follow-up
+       *  calls (getDepositStatus) back to the issuing adapter. */
+      adapterIndex: number;
+      errors: ProviderQuoteError[];
+    }
   | { kind: "no_quotes"; errors: ProviderQuoteError[] }
   | { kind: "invalid_route"; reason: string };
 
@@ -51,25 +59,33 @@ export async function getBestQuoteAcrossProviders(
     adapters.map((a) => a.getQuote(args)),
   );
 
-  const quotes: BridgeQuote[] = [];
+  // Pair each successful quote with its adapterIndex so the caller
+  // can route follow-up calls back to the issuing adapter.
+  const indexed: { quote: BridgeQuote; adapterIndex: number }[] = [];
   const errors: ProviderQuoteError[] = [];
   settled.forEach((r, i) => {
     if (r.status === "fulfilled") {
-      quotes.push(r.value);
+      indexed.push({ quote: r.value, adapterIndex: i });
     } else {
       errors.push({
         adapterIndex: i,
         reason:
-          r.reason instanceof Error
-            ? r.reason.message
-            : String(r.reason),
+          r.reason instanceof Error ? r.reason.message : String(r.reason),
       });
     }
   });
 
-  const best = pickCheapestQuote(quotes);
+  const best = pickCheapestQuote(indexed.map((e) => e.quote));
   if (!best) {
     return { kind: "no_quotes", errors };
   }
-  return { kind: "ok", quote: best, errors };
+  // Recover the adapterIndex of `best` — it's the entry in `indexed`
+  // whose quote is reference-equal to what pickCheapestQuote returned.
+  const winner = indexed.find((e) => e.quote === best)!;
+  return {
+    kind: "ok",
+    quote: best,
+    adapterIndex: winner.adapterIndex,
+    errors,
+  };
 }

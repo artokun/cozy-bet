@@ -357,6 +357,19 @@ cross-chain divergence). Skip them at your peril:
   `Date.now`. Honors `AbortSignal`. 7 unit tests covering each
   terminal path.
 
+- **End-to-end bridged deposit flow** — `apps/bot/src/bridge-flow.ts`'s
+  `executeBridgedDeposit({ adapters, route, timeoutMs, pollIntervalMs })`
+  composes router + monitor into one call: validate route → fan-out
+  quotes → pick cheapest → poll the *issuing* adapter (router returns
+  `adapterIndex` for this) → return a discriminated union (`confirmed` /
+  `invalid_route` / `no_quotes` / `deposit_timeout` / `deposit_failed` /
+  `aborted`). On success, carries both the chosen quote and the
+  destination tx hash — everything the bot needs to fire the on-chain
+  init. The integration agent's full path is: implement one
+  `BridgeAdapter` (e.g. `SquidBridgeAdapter`), call
+  `executeBridgedDeposit`. 7 unit tests including a multi-adapter
+  regression that catches mis-routing of the deposit poll.
+
 ## Build & test (locally)
 
 ```bash
