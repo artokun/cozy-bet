@@ -308,6 +308,15 @@ cross-chain divergence). Skip them at your peril:
 - **Atomic claim → external call → finalize** — see `applyShareDiscount`
   in `flows.ts`. Same shape needed for any one-shot redemption.
 
+- **Escrow-chain policy** — `apps/bot/src/escrow-policy.ts` codifies
+  which chains are allowed to host the escrow contract vs. allowed as
+  a deposit *source* via bridge. Base is excluded as an escrow chain
+  because Coinbase controls Base's validator authority and can freeze
+  contract funds; Base remains valid as a bridge source. Captured as
+  a typed module + 8 unit tests so the decision survives team turnover
+  — re-read the comment at the top of `escrow-policy.ts` before
+  widening it.
+
 ## Build & test (locally)
 
 ```bash
