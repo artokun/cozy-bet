@@ -328,6 +328,15 @@ cross-chain divergence). Skip them at your peril:
   `amountOutMin`, tiebreak on lowest `estimatedFeeAtoms`), and route
   validation. Tracks beads issue `cozy-bet-lfh`.
 
+- **Bridge adapter interface + fake** — `apps/bot/src/bridge-adapter.ts`
+  defines the `BridgeAdapter` contract every real adapter must satisfy
+  (`getQuote(args) → BridgeQuote`, `getDepositStatus(id) → DepositStatus`).
+  Ships with `FakeBridgeAdapter` — deterministic poll-counter state
+  machine (pending → in_flight → confirmed) so downstream tests can
+  drive the bridge layer without reaching network. Real adapters
+  (Squid, Mayan, CCTP V2) plug in by implementing the same interface;
+  the fake doubles as a reference impl. 8 unit tests.
+
 ## Build & test (locally)
 
 ```bash

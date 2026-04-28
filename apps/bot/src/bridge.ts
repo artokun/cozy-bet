@@ -13,7 +13,7 @@
  */
 import { isEscrowChain, isSourceChain } from "./escrow-policy.js";
 
-export type BridgeProvider = "squid" | "mayan" | "cctp";
+export type BridgeProvider = "squid" | "mayan" | "cctp" | "fake";
 
 /**
  * A quote returned by a bridge SDK. All amounts are in the destination
