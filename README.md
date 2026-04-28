@@ -20,6 +20,14 @@ The Solidity escrow is the canonical implementation now; the Solana
 Anchor program is preserved as a parallel reference under
 `apps/program/`. New work goes on Base.
 
+> **Heads-up on committed keypairs.** `apps/program/target/deploy/escrow-keypair.json`
+> is the *program-ID keypair* (its pubkey IS the program address) — committed so
+> anyone can rebuild against the same devnet program ID. It is **not** the upgrade
+> authority. The upgrade authority is a separate keypair (`./keys/bot-resolver.json`,
+> gitignored). Going to mainnet must use a freshly generated program keypair —
+> never reuse this one. EVM private keys are never committed; only the public
+> contract / treasury / USDC addresses appear in tracked `.env.devnet` etc.
+
 ## The contract — `apps/contracts/src/CozyBetEscrow.sol`
 
 382 lines. OpenZeppelin `AccessControl` + `ReentrancyGuard`, single-token
