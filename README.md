@@ -357,6 +357,18 @@ cross-chain divergence). Skip them at your peril:
   `Date.now`. Honors `AbortSignal`. 7 unit tests covering each
   terminal path.
 
+- **withRetry helper** — `apps/bot/src/retry.ts`'s
+  `withRetry(fn, { maxAttempts, baseDelayMs, isRetryable?, maxDelayMs?, signal? })`
+  wraps a network-bound async call with exponential backoff.
+  Default `isRetryable` matches `/429|503|504|timeout|ECONN/i` so
+  common transient HTTP / network errors retry but programmer bugs
+  fail fast. Caps per-sleep at `maxDelayMs` (default 30s). Honors
+  `AbortSignal`. Pairs naturally with bridge adapters: the integration
+  agent wraps `squid.getQuote` in `withRetry` to absorb Squid's rate
+  limits without writing custom backoff logic. 9 unit tests including
+  exponential-backoff verification (delays inspected via injectable
+  `delay`) and abort-mid-retry coverage.
+
 - **End-to-end bridged deposit flow** — `apps/bot/src/bridge-flow.ts`'s
   `executeBridgedDeposit({ adapters, route, timeoutMs, pollIntervalMs })`
   composes router + monitor into one call: validate route → fan-out
