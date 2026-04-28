@@ -317,6 +317,17 @@ cross-chain divergence). Skip them at your peril:
   — re-read the comment at the top of `escrow-policy.ts` before
   widening it.
 
+- **Bridge-quote shape + route validator** — `apps/bot/src/bridge.ts`
+  locks the `BridgeQuote` data model (provider, amountIn,
+  amountOutMin, fee, ETA, TTL, deposit address) and route validation
+  (composes with `escrow-policy.ts` — bridging *into* Base is
+  rejected). The actual SDK call (Squid / Mayan / CCTP) lives at a
+  single integration seam in this module so the integration agent
+  fills in one adapter without re-deriving the data model. 12 unit
+  tests cover quote expiry, cheapest-quote selection (highest
+  `amountOutMin`, tiebreak on lowest `estimatedFeeAtoms`), and route
+  validation. Tracks beads issue `cozy-bet-lfh`.
+
 ## Build & test (locally)
 
 ```bash
