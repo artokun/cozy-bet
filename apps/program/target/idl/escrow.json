@@ -817,6 +817,57 @@
       ]
     },
     {
+      "name": "update_authority",
+      "docs": [
+        "Admin-only. Hand off the program authority to a new pubkey (e.g. a",
+        "Squads multisig vault). Single-step rotation: the current authority",
+        "signs, the new authority is recorded immediately. Multisig approval",
+        "gating is provided by Squads (or whatever wallet signs the tx) — the",
+        "program just verifies the *current* authority signed."
+      ],
+      "discriminator": [
+        32,
+        46,
+        64,
+        28,
+        149,
+        75,
+        243,
+        88
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "new_authority",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
       "name": "update_config",
       "docs": [
         "Admin-only. Pass `None` to keep an existing field."
