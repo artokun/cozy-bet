@@ -16,6 +16,7 @@ import {
 import { disambig, termsHashOf } from "./llm.js";
 import { isOnTimeResolution } from "./reliability.js";
 import { formatLockSentinel } from "./locks.js";
+import { computeRake } from "./rake.js";
 
 /** Determine the wallet a user has linked on a given chain. Returns null if
  *  they haven't linked one. */
@@ -1743,7 +1744,9 @@ export async function adminStats(): Promise<AdminStats> {
   const resolvedVolume = { solana: 0n, base: 0n };
   const fees = { solana: 0n, base: 0n };
   // Approximate per-side fee bps used when no per-bet override: BET_FEE_BPS.
-  const defaultBps = BigInt(env.BET_FEE_BPS);
+  // DB doesn't track the on-chain per-side bps a bet actually resolved with,
+  // so we assume both sides paid the default.
+  const defaultBps = env.BET_FEE_BPS;
 
   for (const b of rows) {
     byStatus[b.status] = (byStatus[b.status] ?? 0) + 1;
@@ -1759,9 +1762,12 @@ export async function adminStats(): Promise<AdminStats> {
     if (b.status === BetStatus.Resolved) {
       const stake = BigInt(b.amount);
       resolvedVolume[chain] += stake * 2n;
-      // Approximate combined fee = stake * (defaultBps + defaultBps) / 10000
-      // since DB doesn't track the per-side bps that actually fired on-chain.
-      fees[chain] += (stake * 2n * defaultBps) / 10_000n;
+      const { standardFee } = computeRake({
+        amount: stake,
+        challengerFeeBps: defaultBps,
+        accepterFeeBps: defaultBps,
+      });
+      fees[chain] += standardFee;
     }
   }
 
