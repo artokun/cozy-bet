@@ -25,6 +25,9 @@ apps/program/target/deploy/*
 apps/program/.anchor
 apps/program/test-ledger
 
+# TypeScript incremental build cache
+*.tsbuildinfo
+
 # Postgres data
 pgdata/
 
